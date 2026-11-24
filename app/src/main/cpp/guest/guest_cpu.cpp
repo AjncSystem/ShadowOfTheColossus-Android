@@ -154,9 +154,14 @@ void SigbusHandler(int sig, siginfo_t* info, void* raw) {
 
 // SIGSEGV: the GPU library write/read-protects guest pages it tracks (page_manager.cpp); a fault
 // there is handled by unprotecting and re-running the instruction, as SotC-PC's probe.c does.
+std::atomic<uint64_t> g_tracked_faults{0}; // SOTC_HLE_STATS: page-tracking faults handled
+
 void SigsegvHandler(int sig, siginfo_t* info, void* raw) {
     if (auto* hook = g_fault_hook.load(std::memory_order_acquire); hook && info) {
-        if (hook(raw, info->si_addr)) return;
+        if (hook(raw, info->si_addr)) {
+            g_tracked_faults.fetch_add(1, std::memory_order_relaxed);
+            return;
+        }
     }
     // sotc_safe_load32/64 (host_bridge.S): an unmapped guest address reads as zero.
     if (raw) {
@@ -450,7 +455,7 @@ bool GuestCpu::Init(const std::string& home, std::string* error) {
         impl->stats = new std::atomic<uint64_t>[kMaxHle]();
         std::thread([impl] {
             std::vector<uint64_t> last(kMaxHle, 0);
-            uint64_t last_total = 0;
+            uint64_t last_total = 0, last_faults = 0;
             for (;;) {
                 std::this_thread::sleep_for(std::chrono::seconds(5));
                 const uint32_t n = impl->hle_count.load(std::memory_order_acquire);
@@ -462,8 +467,12 @@ bool GuestCpu::Init(const std::string& home, std::string* error) {
                 }
                 const uint64_t total = impl->calls.load(std::memory_order_relaxed);
                 std::sort(rows.begin(), rows.end(), std::greater<>());
-                std::string line = "SOTC HLE " + std::to_string((total - last_total) / 5) + " calls/s:";
+                const uint64_t faults = g_tracked_faults.load(std::memory_order_relaxed);
+                std::string line = "SOTC HLE " + std::to_string((total - last_total) / 5) +
+                                   " calls/s, " + std::to_string((faults - last_faults) / 5) +
+                                   " page-tracking faults/s:";
                 last_total = total;
+                last_faults = faults;
                 for (size_t r = 0; r < rows.size() && r < 15; ++r) {
                     line += " " + std::string(impl->hle[rows[r].second].name ? impl->hle[rows[r].second].name : "?") +
                             "=" + std::to_string(rows[r].first / 5);

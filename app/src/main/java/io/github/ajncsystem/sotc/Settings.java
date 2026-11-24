@@ -28,6 +28,11 @@ final class Settings {
     static final String[][] UPSCALERS = {{"fsr1", "FSR 1 (nítido)"}, {"bilinear", "Bilinear (simples)"}};
     static final String[][] SHARPNESS = {
             {"0", "Alta"}, {"250", "Média (padrão)"}, {"600", "Baixa"}, {"off", "Desligada"}};
+    // Internal render size (SOTC_RENDER; FSR 1 scales it to the output). ShadowOfTheColossus-
+    // Android-Aot ships 720p/540p/360p; on the Odin 3 the field near the Sanctuary runs at 13 FPS
+    // in 1080p, 18-19 in 720p and 20-22 in 540p (with its other settings).
+    static final String[][] RENDER_SIZES = {
+            {"1920x1080", "1080p (como no PS4)"}, {"1280x720", "720p (recomendado)"}, {"960x540", "540p (mais rápido)"}};
     static final String[][] OUTPUTS = {
             {"1280x720", "1280 × 720 (720p)"}, {"1920x1080", "1920 × 1080 (1080p, tela do Odin 3)"}};
     static final String[][] VRAM_USE = {
@@ -47,6 +52,13 @@ final class Settings {
             {"fx_fog", "Névoa atmosférica", "fog_enable=0"},
             {"fx_ssao", "Oclusão ambiente (SSAO)", "AO_Mode=0"},
             {"fx_motionblur", "Motion blur", "r_motionBlurEnable=0"}};
+    // Effects turned off by patching the game (Bachata S4+ patches, SOTC_BACHATA_PERF) or by the
+    // renderer (TAA, SOTC_TAA_OFF): {key, label, patch name or "" }. Off by default on Android,
+    // as ShadowOfTheColossus-Android-Aot runs (bloom and blur: 16 -> 18.6 FPS in 720p).
+    static final String[][] PERF_EFFECTS = {
+            {"fx_bloom", "Bloom (brilho em volta da luz)", "bloom"},
+            {"fx_blur", "Desfoque de profundidade", "blur"},
+            {"fx_taa", "Antisserrilhado temporal (TAA)", ""}};
 
     private static final Map<String, Object> DEFAULTS = new LinkedHashMap<>();
     static {
@@ -69,10 +81,12 @@ final class Settings {
         DEFAULTS.put("skip_logos", false);
         DEFAULTS.put("skip_film", false);
         for (String[] e : EFFECTS) DEFAULTS.put(e[0], true);
+        for (String[] e : PERF_EFFECTS) DEFAULTS.put(e[0], false);
+        DEFAULTS.put("render_res", "1280x720");
         DEFAULTS.put("perf_culling", true);
         DEFAULTS.put("perf_record_thread", true);
         DEFAULTS.put("perf_dma", true);
-        DEFAULTS.put("rb_hot", true);
+        DEFAULTS.put("rb_hot", false); // Android: off, as ShadowOfTheColossus-Android-Aot runs
         DEFAULTS.put("volume", "100");
         DEFAULTS.put("audio_channels", "2");
         DEFAULTS.put("rumble", true);
@@ -235,7 +249,25 @@ final class Settings {
         // Field near the Sanctuary: 10 -> 13 FPS. extra_env overrides both.
         env.put("SOTC_WAIT_MARKER", "1");
         env.put("SOTC_FLUSH_US", "250");
-        if (!str("tu_debug").trim().isEmpty()) env.put("TU_DEBUG", str("tu_debug").trim());
+        // The rest of ShadowOfTheColossus-Android-Aot's run-sotc-bionic.sh that our renderer has:
+        // readback streaming, no texture upload budget (no zero-filled placeholders), shaders
+        // translated on the command processor. With 720p: 13 -> 16 FPS.
+        env.put("SOTC_RB_STREAM", "1");
+        env.put("SOTC_RB_STREAM_MAX_KB", "1024");
+        env.put("SOTC_UPLOAD_BUDGET_MB", "0");
+        env.put("SOTC_ASYNC_TRANSLATE", "0");
+        env.put("SOTC_ASYNC_PRELOAD", "0");
+        if (!str("render_res").equals("1920x1080")) env.put("SOTC_RENDER", str("render_res"));
+        StringBuilder bachata = new StringBuilder();
+        for (String[] e : PERF_EFFECTS) {
+            if (bool(e[0])) continue;
+            if (e[2].isEmpty()) env.put("SOTC_TAA_OFF", "1");
+            else bachata.append(bachata.length() > 0 ? "," : "").append(e[2]);
+        }
+        if (bachata.length() > 0) env.put("SOTC_BACHATA_PERF", bachata.toString());
+        // nomultipos: the Turnip geometry workaround of the verified Adreno path (same port).
+        String tu = str("tu_debug").trim();
+        env.put("TU_DEBUG", tu.isEmpty() ? "nomultipos" : tu.contains("nomultipos") ? tu : tu + ",nomultipos");
         env.put("SOTC_FEX_TSO", bool("fex_tso") ? "1" : "0");
         if (bool("selftest")) env.put("SOTC_SELFTEST", "1");
 

@@ -256,6 +256,7 @@ public class LauncherActivity extends Activity {
 
     private void pageImage() {
         heading("Imagem e FPS");
+        choice("Resolução interna", Settings.RENDER_SIZES, settings.str("render_res"), v -> settings.put("render_res", v));
         choice("Saída", Settings.OUTPUTS, settings.str("output_res"), v -> settings.put("output_res", v));
         choice("Taxa de quadros", Settings.FPS_MODES, settings.str("fps_mode"), v -> { settings.put("fps_mode", v); showPage("image"); });
         if (settings.str("fps_mode").equals("60"))
@@ -271,6 +272,7 @@ public class LauncherActivity extends Activity {
         toggle("Barra de desempenho no topo (FPS, CPU, GPU, RAM, VRAM, bateria; L3 + R3 mostra/esconde)", "show_fps");
         label("Efeitos");
         for (String[] e : Settings.EFFECTS) toggle(e[1], e[0]);
+        for (String[] e : Settings.PERF_EFFECTS) toggle(e[1] + " (pesa no FPS)", e[0]);
         toggle("Pular os logos de abertura", "skip_logos");
         toggle("Pular o filme de abertura e a tela de título", "skip_film");
     }

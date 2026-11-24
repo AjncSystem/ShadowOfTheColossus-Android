@@ -183,8 +183,11 @@ size_t ApplyRenderSize(uint8_t* image, uint64_t size, std::string& out) {
     const std::string spec = Env("SOTC_RENDER");
     unsigned w = 0, h = 0;
     if (spec.empty() || sscanf(spec.c_str(), "%ux%u", &w, &h) != 2 || (w == 1920 && h == 1080)) return 0;
-    if (w < 640 || h < 360 || w > 7680 || h > 4320 || w % 8 || h % 8) {
-        Appendf(out, "Render size %s: 640x360 to 7680x4320, multiples of 8; ignored\n", spec.c_str());
+    // Width a multiple of 8, height of 4 (960x540: as ShadowOfTheColossus-Android-Aot's
+    // stage_sotc_lowres.py relaxes it).
+    if (w < 640 || h < 360 || w > 7680 || h > 4320 || w % 8 || h % 4) {
+        Appendf(out, "Render size %s: 640x360 to 7680x4320, width a multiple of 8, height of 4; ignored\n",
+                spec.c_str());
         return 0;
     }
     if (Env("SOTC_NEO") == "1") {
@@ -219,6 +222,90 @@ size_t ApplyRenderSize(uint8_t* image, uint64_t size, std::string& out) {
     }
     Appendf(out, "Render size %ux%u: on\n", w, h);
     return std::size(kRenderSites);
+}
+
+// SOTC_BACHATA_PERF=bloom,blur,ssr,fog,shadows: the game-side performance patches of Bachata S4+
+// 0.2.7 (patches/SotC_CUSA08809_Graphics.xml, erickmendes22; as ported in
+// ShadowOfTheColossus-Android-Aot ports/sotc/android/bachata_perf.py, GPL-2.0-or-later). Each
+// effect redirects the call that runs a render pass to a 16-byte routine in an empty code cave
+// that marks the pass done and returns. Cave bytes must be zero and every call site must hold its
+// original bytes, or nothing of that effect is written.
+struct BachataCall {
+    uint64_t address;
+    const char* original;
+    const char* bytes;
+};
+struct BachataEffect {
+    const char* name;
+    std::vector<std::pair<uint64_t, const char*>> caves; // address, routine
+    std::vector<BachataCall> calls;                      // one per cave, in the same order
+};
+const std::vector<BachataEffect>& BachataEffects() {
+    static const std::vector<BachataEffect> effects = {
+        {"bloom", {{0x0139a4f0, "488b4360c60000c6436800e9606808ff"}},
+         {{0x004814fb, "e860f8f9ff", "e8f08ff100"}}},
+        {"blur", {{0x0139a510, "488b4360c60000c6436800e9406808ff"}},
+         {{0x00483c8f, "e8ccd0f9ff", "e87c68f100"}}},
+        {"ssr", {{0x0139a550, "488b4360c60000c6436800e9006808ff"}},
+         {{0x00475ecd, "e88eaefaff", "e87e46f200"}}},
+        {"fog", {{0x0139a570, "488b4360c60000c6436800e9e06708ff"}},
+         {{0x0047afa0, "e8bb5dfaff", "e8cbf5f100"}}},
+        {"shadows",
+         {{0x0139a530, "488b4360c60000c6436800e9206808ff"},
+          {0x0139a590, "488b4360c60000c6436800e9c06708ff"},
+          {0x0139a5b0, "488b4360c60000c6436800e9a06708ff"},
+          {0x0139a5d0, "488b4360c60000c6436800e9806708ff"}},
+         {{0x00474936, "e825c4faff", "e8f55bf200"},
+          {0x00474468, "e8f3c8faff", "e82361f200"},
+          {0x0047437c, "e8dfc9faff", "e82f62f200"},
+          {0x0047819d, "e8be8bfaff", "e82e24f200"}}},
+    };
+    return effects;
+}
+
+size_t ApplyBachataPerf(uint8_t* image, uint64_t size, std::string& out) {
+    size_t writes = 0;
+    for (const std::string& raw : Split(Env("SOTC_BACHATA_PERF"), ", ")) {
+        std::string name;
+        for (char c : raw) name += static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        const BachataEffect* effect = nullptr;
+        for (const BachataEffect& e : BachataEffects())
+            if (name == e.name) effect = &e;
+        if (!effect) {
+            Appendf(out, "Bachata patch %s: unknown, ignored\n", name.c_str());
+            continue;
+        }
+        bool ok = effect->caves.size() == effect->calls.size();
+        for (const auto& [cave, routine] : effect->caves) {
+            const uint64_t at = cave - kBase, len = Hex(routine).size();
+            ok = ok && at + len <= size;
+            for (uint64_t i = 0; ok && i < len; ++i) ok = image[at + i] == 0;
+        }
+        for (size_t i = 0; ok && i < effect->calls.size(); ++i) {
+            const BachataCall& c = effect->calls[i];
+            ok = Holds(image, size, c.address, c.original);
+            // the new CALL must land on its cave
+            const std::vector<uint8_t> call = Hex(c.bytes);
+            int32_t rel = 0;
+            std::memcpy(&rel, call.data() + 1, 4);
+            ok = ok && call[0] == 0xE8 && c.address + 5 + rel == effect->caves[i].first;
+        }
+        if (!ok) {
+            Appendf(out, "Bachata patch %s: unexpected bytes, not applied\n", name.c_str());
+            continue;
+        }
+        for (const auto& [cave, routine] : effect->caves) {
+            const std::vector<uint8_t> data = Hex(routine);
+            std::memcpy(image + (cave - kBase), data.data(), data.size());
+            ++writes;
+        }
+        for (const BachataCall& c : effect->calls) {
+            Write(image, Patch{c.address, c.original, c.bytes});
+            ++writes;
+        }
+        Appendf(out, "Bachata patch %s: on\n", name.c_str());
+    }
+    return writes;
 }
 
 void ApplySotcModes(uint8_t* image, uint64_t size, uint8_t* cmdline_area, uint64_t cmdline_area_size,
@@ -260,6 +347,7 @@ void ApplySotcModes(uint8_t* image, uint64_t size, uint8_t* cmdline_area, uint64
         Appendf(out, "Mode %s: on\n", name.c_str());
     }
     writes += ApplyRenderSize(image, size, out);
+    writes += ApplyBachataPerf(image, size, out);
 
     // PS4 Pro mode: its larger render targets push the free system memory figure under the
     // texture pool reserve (textures dropping to mip 3): reserve 0, which needs the pool fix.

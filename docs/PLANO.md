@@ -392,6 +392,29 @@ esperando trabalho. Dois ajustes do SotC-PC que no Adreno estavam desligados:
 Juntos: 13 FPS em três partidas seguidas, kgsl 88% ocupada. Padrão no Android (Settings.java).
 `SOTC_WAIT_SPIN_US=1000` sozinho fechou o jogo uma vez.
 
+Testado depois, sem ganho (12–13 FPS, kgsl ~88%): Turnip V36 (8,4), Turnip do uncharted-android
+(12,3), Turnip faux123 1.2.10 (10,7, feito e testado num Odin 3), `TU_DEBUG=noubwc` (12,3), `sysmem,noubwc,nolrz` (11,6). Falhas de proteção de página: ~1.500/s
+(no Bloodborne-PC eram 115 mil/s e a janela de 64 KiB deu +22%; aqui não pesa). Jogando, com a
+câmera e o Wander em movimento, o FPS fica em 10–11.
+
+**Configuração do ShadowOfTheColossus-Android-Aot (24/11/2026): 13 → 19–20 FPS.** O port de
+erickmendes22 (Daedalus, fork do SotC-PC, GPL-2.0-or-later) roda o jogo no Android a 30 FPS com AOT
+na CPU (bbrecomp) e ajustes de renderização. Trazidos para cá (padrão no Android, opções no
+launcher):
+
+| Mudança | FPS |
+|---|---|
+| nosso padrão, 1080p | 13 |
+| as opções dele que já existiam aqui (`SOTC_TAA_OFF`, `SOTC_RB_STREAM`, `SOTC_RB_HOT=0`, `SOTC_UPLOAD_BUDGET_MB=0`, `SOTC_ASYNC_TRANSLATE/PRELOAD=0`, `TU_DEBUG=nomultipos`) + 720p interno | 16,1 |
+| + patches do Bachata S4+ bloom e blur (`SOTC_BACHATA_PERF`, portados para `sotc_modes.cpp`) | 18,6 |
+| idem em 540p (`960x540`, altura múltipla de 4) | 20–22 |
+| padrão novo do launcher (720p, bloom/blur/TAA desligados) | 19,3 |
+
+Ainda não trazidos: os atalhos de CPU dele na montagem de comandos (`stage_perf_fastpaths`,
+`stage_sotc_stage_spec_cpu`, `stage_sotc_flatbuf_reuse_057`, `stage_sotc_rt_memo`,
+`stage_sotc_reg_snapshot`), `SOTC_DEPTH_FAST`/`SOTC_GBUFFER_FAST`, o driver Turnip "GameHub DD
+26.3" e o AOT.
+
 Ainda: o kgsl conta ~68 ms de GPU por quadro e as marcações ~31 ms; a diferença está entre as
 operações (barreiras, passagens de render, cópias). E o jogo fechou no carregamento em ~1 de cada
 3 partidas em várias configurações; `bench.ps1` agora guarda o log quando isso acontece.
