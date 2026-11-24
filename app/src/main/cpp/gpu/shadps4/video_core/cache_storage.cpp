@@ -43,6 +43,17 @@ bool ar_is_read_only{true};
 // see: with any of them set the cache goes to a folder of its own ("_t" and a hash of their
 // values), so switching a test on or off never reuses shaders of the other setting and needs no
 // "Clear shader cache".
+// sotc-android: shaders lowered for 64 lanes on the Adreno (Instance::IsAdrenoWave64) get their
+// own cache folder: the ones built for the 128-wide default must not be reused.
+std::string AdrenoWaveTag() {
+#ifdef __ANDROID__
+    const char* v = std::getenv("SOTC_ADRENO_WAVE64");
+    return v && v[0] == '0' ? "" : "_w64";
+#else
+    return "";
+#endif
+}
+
 std::string ShaderTestTag() {
     static constexpr const char* switches[] = {
         "SOTC_NAN_GUARD", "SOTC_AMD_AS_NV", "SOTC_MANUAL_INTERP", "SOTC_NO_EXPLICIT_VERTEX",
@@ -158,7 +169,8 @@ void DataBase::Open() {
                      (std::string{game_info.GameSerial()} +
                       (EmulatorSettings.IsDirectMemoryAccessEnabled() ? "" : "_nodma") +
                       (EmulatorSettings.IsNoInt64() ? "_noi64" : "") +
-                      (Libraries::Kernel::sceKernelIsNeoMode() ? "_neo" : "") + ShaderTestTag());
+                      (Libraries::Kernel::sceKernelIsNeoMode() ? "_neo" : "") + ShaderTestTag() +
+                      AdrenoWaveTag());
         if (!std::filesystem::exists(cache_path)) {
             std::filesystem::create_directories(cache_path);
         }

@@ -5,9 +5,9 @@ Port do [Shadow of the Colossus — PC](https://github.com/AjncSystem/ShadowOfTh
 Arquitetura e etapas em [docs/PLANO.md](docs/PLANO.md).
 
 **Estado: M4 em andamento.** O jogo roda no Odin 3 pelo runtime e pela biblioteca de vídeo do
-SotC-PC sobre o FEXCore: inicializa, carrega o mundo e **desenha a abertura da tela de título** a
-20–30 FPS. Ainda há uma queda do driver de vídeo ("Vulkan device lost") depois de algum tempo
-(detalhes em `docs/PLANO.md`). Relatórios das etapas em `docs/`.
+SotC-PC sobre o FEXCore: inicializa, carrega o mundo e **mostra a abertura com texturas**, a 15–30
+FPS, sem as quedas do driver de vídeo dos testes anteriores (o cache de buffers usa memória própria
+em vez de memória esparsa no Adreno; detalhes em `docs/PLANO.md`). Relatórios das etapas em `docs/`.
 
 ## Launcher
 

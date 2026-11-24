@@ -49,9 +49,14 @@ class PageManager;
 
 class BufferCache {
     static constexpr u64 ADDRESS_SPACE_BITS = 40;
-    static constexpr u64 ARENA_PAGE_BITS = 32;
-    static constexpr u64 ARENA_PAGE_SIZE = u64{1} << ARENA_PAGE_BITS;
-    static constexpr u64 NUM_ARENA_PAGES = u64{1} << (ADDRESS_SPACE_BITS - ARENA_PAGE_BITS);
+    /// Sparse arenas: pages of 4 GiB. sotc-android: arenas that own their memory
+    /// (BB_NONSPARSE_ARENAS) are committed in full when made, so their pages are small
+    /// (BB_NONSPARSE_ARENA_MB, 16 by default): the page size is set at construction.
+    static constexpr u64 MAX_ARENA_PAGE_BITS = 32;
+    static constexpr u64 MIN_BACKED_PAGE_BITS = 21; // 2 MiB
+    u64 ARENA_PAGE_BITS = MAX_ARENA_PAGE_BITS;
+    u64 ARENA_PAGE_SIZE = u64{1} << MAX_ARENA_PAGE_BITS;
+    u64 NUM_ARENA_PAGES = u64{1} << (ADDRESS_SPACE_BITS - MAX_ARENA_PAGE_BITS);
     static constexpr u64 MIN_BLOCK_SIZE = 16_KB;
     static constexpr u64 STREAM_THRESHOLD = 16_KB;
 
@@ -365,9 +370,28 @@ private:
     u64 unwaited_bind_tick{}; ///< sotc: SubmitArenaBindsNow's tick the graphics queue owes a wait
     bool gather_hot_off{};    ///< sotc: GatherDownloads without hot regions (cull readbacks)
 
-    std::array<const Buffer*, NUM_ARENA_PAGES> address_space{};
+    std::vector<const Buffer*> address_space;
     std::deque<Buffer> arenas;
     std::vector<ArenaBinds> pending_binds;
+
+    /// sotc-android (after uncharted-android #36 / Bloodborne-Android, GPL-2.0): the arenas own
+    /// their memory (MemoryType::Backed) instead of sparse binding: the driver has no sparse
+    /// buffers, or BB_NONSPARSE_ARENAS=1. Resident blocks are then the arena's own memory: no
+    /// allocation, no bind, no unbind; only the BDA page table changes.
+    bool non_sparse_arenas{};
+    u64 backed_arena_bytes{};
+    u64 max_backed_arena_bytes{};
+    const Buffer* GetBackedArena(u64 first_block, u64 last_block);
+    /// Copies the resident blocks of the arenas a merged one replaces into it (GPU copies, in
+    /// stream order) and points their page table entries at it.
+    void MigrateBackedArenas(const Buffer* merged, u64 base_block, u64 end_block);
+    /// Arenas replaced by a merged one, freed once the GPU passed `tick` (before each submit).
+    struct RetiredArena {
+        u64 tick;
+        const Buffer* arena;
+    };
+    std::deque<RetiredArena> retired_arenas;
+    void ReleaseRetiredArenas();
     Vulkan::Semaphore memory_semaphore;
 
     struct Backing : public Interval {

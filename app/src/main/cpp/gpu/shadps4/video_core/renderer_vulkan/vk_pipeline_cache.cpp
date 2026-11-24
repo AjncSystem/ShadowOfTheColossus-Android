@@ -368,7 +368,9 @@ PipelineCache::PipelineCache(const Instance& instance_, Scheduler& scheduler_,
     // turns these barriers on. SOTC_AMD64_LDS=0 turns it off.
     const bool amd64_lds = [&] {
         const char* v = std::getenv("SOTC_AMD64_LDS");
-        return (!v || std::atoi(v) != 0) && instance.GetVendorID() == 0x1002 &&
+        // sotc-android: the Adreno on the 64-wide path too (IsAdrenoWave64).
+        return (!v || std::atoi(v) != 0) &&
+               (instance.GetVendorID() == 0x1002 || instance.IsAdrenoWave64()) &&
                instance.SubgroupSize() >= 64;
     }();
     if (amd64_lds) {

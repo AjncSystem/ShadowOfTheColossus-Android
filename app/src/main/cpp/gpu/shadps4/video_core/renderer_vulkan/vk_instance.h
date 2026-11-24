@@ -272,7 +272,26 @@ public:
         constexpr auto stages = vk::ShaderStageFlagBits::eVertex |
                                 vk::ShaderStageFlagBits::eFragment |
                                 vk::ShaderStageFlagBits::eCompute;
+        if (IsAdrenoWave64()) {
+            return true;
+        }
         return vk13_features.subgroupSizeControl && vk13_props.maxSubgroupSize >= 64 &&
+               (vk13_props.requiredSubgroupSizeStages & stages) == stages;
+    }
+
+    /// sotc-android: Turnip on the Adreno reports 128-wide subgroups (min 64, max 128) and lets
+    /// fragment and compute shaders require a size, not vertex shaders (those run 64 wide). Left
+    /// alone, the recompiler lowered the game's wave64 code for 128 lanes with the size free:
+    /// flat yellow/green characters and coloured specks, like the AMD #7 case. The Adreno takes
+    /// the 64-wide path: 64 required in fragment and compute. SOTC_ADRENO_WAVE64=0 turns it off.
+    bool IsAdrenoWave64() const {
+        static const bool off = [] {
+            const char* v = std::getenv("SOTC_ADRENO_WAVE64");
+            return v && v[0] == '0';
+        }();
+        constexpr auto stages = vk::ShaderStageFlagBits::eFragment | vk::ShaderStageFlagBits::eCompute;
+        return !off && GetVendorID() == 0x5143 && vk13_features.subgroupSizeControl &&
+               vk13_props.minSubgroupSize <= 64 && vk13_props.maxSubgroupSize >= 64 &&
                (vk13_props.requiredSubgroupSizeStages & stages) == stages;
     }
 

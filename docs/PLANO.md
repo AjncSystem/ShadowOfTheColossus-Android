@@ -297,10 +297,37 @@ sem mudar o resultado (um jogo de 1,5 a 3 min cada):
 | `BB_DIRECT_MEMORY_ACCESS=0` | cai (152 s) |
 | `SOTC_RB_HOT=0` | cai (30 s) |
 | janela de memória reservada | cai (56 s) |
+| Turnip do uncharted-android 0.3.8 (Mesa 26.2.5 + patches KGSL/a8xx, sysmem e recuperação de contexto) | `RBBM: GPC error` aos 46 s; a recuperação troca o contexto, o trabalho enviado se perde, o jogo espera a GPU 5 s e sai (código 23) |
 
-Próximo: achar qual envio quebra (registro dos últimos envios antes da queda, `TU_DEBUG=rd` para
-gravar o fluxo de comandos) e o uso de buffers esparsos (o buffer cache do SotC é um arena esparso
-de 16 GB; o suporte esparso do Turnip no a8xx é novo).
+**Resolvido (24/11/2026): arenas com memória própria.** O cache de buffers do SotC usa arenas
+esparsas de 4 GB; no Adreno 830 o suporte esparso do Turnip corrompe o fluxo de comandos. Portado o
+caminho sem memória esparsa do uncharted-android (issue #36) e do Bloodborne-Android
+(`MemoryType::Backed`): cada arena é um buffer comum com memória própria, em páginas de 16 MiB
+(`BB_NONSPARSE_ARENA_MB`), fundidas com cópia quando um pedido atravessa arenas; residência e
+liberação só mexem na tabela BDA; o despejo de blocos frios fica desligado. Padrão em GPUs Qualcomm
+(`BB_NONSPARSE_ARENAS=0` volta ao esparso). Resultado: 4 min sem queda (antes 15 s a 2,5 min), a
+abertura do jogo com texturas, 15–30 FPS.
+
+**Velocidade (24/11/2026):** o FEX escala o `rdtsc` do jogo para 1 GHz+ quando o contador do
+aparelho é lento (`SmallTSCScale`, 19,2 MHz << 6), mas o runtime informa 19,2 MHz ao jogo: o tempo
+corria 64 vezes mais rápido ("Starting main loop: 00:02:57" em ~10 s). A escala fica desligada.
+
+**Cores (24/11/2026): subgrupos de 64 no Adreno.** O Turnip informa subgrupos de 128 (mínimo 64) e
+só deixa fixar o tamanho no fragment e no compute: o port não entrava no caminho de 64 (exige os
+três estágios) nem no de 32 (mínimo 64), e compilava o código wave64 do jogo para 128 lanes sem
+fixar o tamanho. Wander amarelo chapado, Agro verde, pontos vermelhos e verdes e brilho vermelho,
+a mesma família de falha das AMD no PC (0.57, issue #7). Agora o Adreno usa o caminho de 64
+(`IsAdrenoWave64`: 64 fixado no fragment e no compute; `SOTC_ADRENO_WAVE64=0` desliga) com as
+barreiras de LDS ligadas, e esses shaders têm pasta de cache própria (`_w64`). Os pontos coloridos
+e o brilho vermelho sumiram na abertura.
+
+**Memória (24/11/2026):** arenas com memória própria ocupam páginas inteiras: com 16 MiB eram
+2,2 GB aos 100 s e o Android matou o jogo (lowmemorykiller, ~500 MB livres). No Adreno as páginas
+são de 2 MiB (`BB_NONSPARSE_ARENA_MB`): 1,3 GB e ~1,4 GB livres no mesmo ponto, mesmo FPS. 4,4 min
+sem queda.
+
+Ainda a ver: o Wander e o Agro com textura (não apareceram nas fotos do último teste), o FPS
+(15–20 nas partes pesadas da abertura) e partidas mais longas.
 
 ## Referências
 

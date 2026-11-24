@@ -27,6 +27,8 @@ std::string_view BufferTypeName(MemoryType type) {
         return "DeviceLocal";
     case MemoryType::Sparse:
         return "Sparse";
+    case MemoryType::Backed:
+        return "Backed";
     default:
         return "Invalid";
     }
@@ -77,15 +79,56 @@ void UniqueBuffer::Destroy() {
     } else if (buffer) {
         device.destroyBuffer(buffer);
     }
+    if (memory) {
+        device.freeMemory(memory); // MemoryType::Backed: the buffer's own memory goes with it
+    }
     buffer = VK_NULL_HANDLE;
     allocation = VK_NULL_HANDLE;
+    memory = VK_NULL_HANDLE;
+    memory_size = 0;
     bda_addr = 0;
 }
 
 void UniqueBuffer::Create(vk::BufferCreateInfo& buffer_ci, MemoryType mem_type,
                           VmaAllocationInfo* out_alloc_info) {
     const bool with_bda = bool(buffer_ci.usage & vk::BufferUsageFlagBits::eShaderDeviceAddress);
-    if (mem_type != MemoryType::Sparse) {
+    if (mem_type == MemoryType::Backed) {
+        // sotc-android (uncharted-android / Bloodborne-Android 075d9e9d0e, GPL-2.0): an arena
+        // without sparse binding: a plain buffer bound to one dedicated memory of its full size,
+        // device-local first (Adreno memory is unified), else any type the buffer takes.
+        buffer = Vulkan::Check(device.createBuffer(buffer_ci));
+        const auto reqs = device.getBufferMemoryRequirements(buffer);
+        const VkPhysicalDeviceMemoryProperties* props = nullptr;
+        vmaGetMemoryProperties(allocator, &props);
+        const vk::MemoryAllocateFlagsInfo flags_info = {
+            .flags = vk::MemoryAllocateFlagBits::eDeviceAddress,
+        };
+        vk::Result allocated = vk::Result::eErrorOutOfDeviceMemory;
+        for (const bool want_local : {true, false}) {
+            for (u32 i = 0; i < props->memoryTypeCount && !memory; ++i) {
+                const bool local =
+                    props->memoryTypes[i].propertyFlags & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
+                if (!((reqs.memoryTypeBits >> i) & 1) || local != want_local) {
+                    continue;
+                }
+                const vk::MemoryAllocateInfo allocate_info = {
+                    .pNext = with_bda ? &flags_info : nullptr,
+                    .allocationSize = reqs.size,
+                    .memoryTypeIndex = i,
+                };
+                const auto r = device.allocateMemory(allocate_info);
+                allocated = r.result;
+                if (r.result == vk::Result::eSuccess) {
+                    memory = r.value;
+                    memory_type = i;
+                }
+            }
+        }
+        ASSERT_MSG(memory, "Out of memory for a {} MiB buffer cache arena: {}", reqs.size >> 20,
+                   vk::to_string(allocated));
+        memory_size = reqs.size;
+        Vulkan::Check(device.bindBufferMemory(buffer, memory, 0));
+    } else if (mem_type != MemoryType::Sparse) {
         const VmaAllocationCreateFlags bda_flag =
             with_bda ? VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT : 0;
         const VmaAllocationCreateInfo alloc_ci = {
@@ -163,7 +206,7 @@ Buffer::Buffer(const Vulkan::Instance& instance, VAddr cpu_addr_, u64 size_bytes
         Vulkan::SetObjectName(device, Handle(), "Buffer {:#x}:{:#x}", cpu_addr, size_bytes);
     }
 
-    if (mem_type != MemoryType::Sparse) {
+    if (mem_type != MemoryType::Sparse && mem_type != MemoryType::Backed) {
         VkMemoryPropertyFlags property_flags{};
         vmaGetAllocationMemoryProperties(instance.GetAllocator(), buffer.allocation,
                                          &property_flags);

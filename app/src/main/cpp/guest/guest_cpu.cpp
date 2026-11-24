@@ -381,6 +381,11 @@ bool GuestCpu::Init(const std::string& home, std::string* error) {
     FEXCore::Config::Load();
     FEXCore::Config::Set(FEXCore::Config::CONFIG_IS64BIT_MODE, "1");
     FEXCore::Config::Set(FEXCore::Config::CONFIG_DISABLETELEMETRY, "1");
+    // The guest's rdtsc is the raw ARM counter (CNTVCT_EL0), the TSC the runtime reports
+    // (sceKernelReadTsc / sceKernelGetTscFrequency = CNTFRQ_EL0, 19.2 MHz on Snapdragon). FEX's
+    // default scales rdtsc up to 1 GHz+ on such counters (<< 6 here): the game's own rdtsc
+    // timing then ran 64x faster than the frequency it was told.
+    FEXCore::Config::Set(FEXCore::Config::CONFIG_SMALLTSCSCALE, "0");
     const char* tso = getenv("SOTC_FEX_TSO");
     info_.tso = !(tso && tso[0] == '0');
     FEXCore::Config::Set(FEXCore::Config::CONFIG_TSOENABLED, info_.tso ? "1" : "0");

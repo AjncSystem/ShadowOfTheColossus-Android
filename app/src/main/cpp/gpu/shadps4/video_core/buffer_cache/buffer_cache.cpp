@@ -92,9 +92,51 @@ BufferCache::BufferCache(const Vulkan::Instance& instance_, Vulkan::Scheduler& s
       stream_buffer{instance, scheduler, MemoryType::Stream, STREAM_BUFFER_SIZE},
       gds_buffer{instance, 0, GDS_BUFFER_SIZE, MemoryType::Stream, "GDS Buffer"},
       memory_semaphore{instance} {
+    // sotc-android (uncharted-android #36 / Bloodborne-Android 2c96baf, GPL-2.0): arenas that own
+    // their memory where the driver has no sparse buffers; BB_NONSPARSE_ARENAS=1/0 forces it.
+    {
+        const auto features = instance.GetPhysicalDevice().getFeatures();
+        const bool has_sparse = features.sparseBinding && features.sparseResidencyBuffer;
+        // On by default on Adreno too: Turnip's sparse buffers on the Adreno 830 (KGSL) lost the
+        // device within 15 s to 4 min (CP opcode / protected mode / GPC errors), with every Turnip
+        // build tried; with arenas that own their memory the game ran clean.
+        constexpr u32 VendorQualcomm = 0x5143;
+        const bool adreno = instance.GetPhysicalDevice().getProperties().vendorID == VendorQualcomm;
+        const char* env = std::getenv("BB_NONSPARSE_ARENAS");
+        non_sparse_arenas = env && *env ? env[0] != '0' : (!has_sparse || adreno);
+        if (non_sparse_arenas) {
+            max_backed_arena_bytes = std::min<u64>(instance.MaxMemoryAllocationSize(), 4_GB);
+            // sotc-android: 2 MiB on the Adreno (12 GB shared by CPU and GPU): an arena commits
+            // its whole pages, and 16 MiB pages held 2.2 GB of arenas 100 s into the intro (the
+            // game killed for memory), 4 MiB 1.5 GB, 2 MiB 1.3 GB at the same FPS.
+            u64 page_mib = adreno ? 2 : 16;
+            if (const char* mb = std::getenv("BB_NONSPARSE_ARENA_MB"); mb && *mb) {
+                page_mib = std::strtoull(mb, nullptr, 10);
+            }
+            page_mib = std::bit_floor(std::clamp<u64>(page_mib, u64{1} << (MIN_BACKED_PAGE_BITS - 20),
+                                                      u64{1} << (MAX_ARENA_PAGE_BITS - 20)));
+            ARENA_PAGE_BITS = std::bit_width(page_mib << 20) - 1;
+            while (ARENA_PAGE_BITS > MIN_BACKED_PAGE_BITS &&
+                   (u64{1} << ARENA_PAGE_BITS) > max_backed_arena_bytes) {
+                --ARENA_PAGE_BITS;
+            }
+            ARENA_PAGE_SIZE = u64{1} << ARENA_PAGE_BITS;
+            NUM_ARENA_PAGES = u64{1} << (ADDRESS_SPACE_BITS - ARENA_PAGE_BITS);
+            std::fprintf(stderr,
+                         "Buffer cache: no sparse binding (%s): arenas own their memory, pages of "
+                         "%llu MiB (allocation limit %llu MiB)\n",
+                         !has_sparse ? "the driver has none"
+                         : env && *env ? "BB_NONSPARSE_ARENAS=1"
+                                       : "Adreno default",
+                         static_cast<unsigned long long>(ARENA_PAGE_SIZE >> 20),
+                         static_cast<unsigned long long>(instance.MaxMemoryAllocationSize() >> 20));
+        }
+        address_space.assign(NUM_ARENA_PAGES, nullptr);
+    }
     const vk::BufferCreateInfo probe_ci = {
-        .flags =
-            vk::BufferCreateFlagBits::eSparseBinding | vk::BufferCreateFlagBits::eSparseResidency,
+        .flags = non_sparse_arenas ? vk::BufferCreateFlags{}
+                                   : vk::BufferCreateFlagBits::eSparseBinding |
+                                         vk::BufferCreateFlagBits::eSparseResidency,
         .size = ARENA_PAGE_SIZE,
         .usage = ARENA_USAGE,
         .sharingMode = vk::SharingMode::eExclusive,
@@ -104,7 +146,10 @@ BufferCache::BufferCache(const Vulkan::Instance& instance_, Vulkan::Scheduler& s
     };
     const auto device = instance.GetDevice();
     const auto reqs = device.getBufferMemoryRequirements(req_info).memoryRequirements;
-    block_size = Common::AlignUp(std::max<u64>(reqs.alignment, MIN_BLOCK_SIZE), reqs.alignment);
+    // sotc-android: blocks of 64 KiB at least without sparse binding (a plain buffer's alignment is
+    // small): the BDA page table has one entry per block of the 40-bit space (128 MiB at 64 KiB).
+    block_size = Common::AlignUp(
+        std::max<u64>(reqs.alignment, non_sparse_arenas ? 64_KB : MIN_BLOCK_SIZE), reqs.alignment);
     ASSERT_MSG(std::popcount(block_size) == 1, "Sparse block size {} is not a power of 2",
                block_size);
     block_shift = std::bit_width(block_size) - 1;
@@ -2471,6 +2516,9 @@ void BufferCache::SynchronizeDmaBuffers() {
 }
 
 const Buffer* BufferCache::GetArena(u64 first_block, u64 last_block) {
+    if (non_sparse_arenas) {
+        return GetBackedArena(first_block, last_block);
+    }
     const u64 first_page = first_block >> blocks_per_arena_page_shift;
     const u64 last_page = last_block >> blocks_per_arena_page_shift;
     ASSERT_MSG(last_page - first_page <= 1,
@@ -2557,6 +2605,200 @@ const Buffer* BufferCache::GetArena(u64 first_block, u64 last_block) {
     return new_arena;
 }
 
+const Buffer* BufferCache::GetBackedArena(u64 first_block, u64 last_block) {
+    // sotc-android (after uncharted-android, GPL-2.0): an arena that owns its memory spans as many
+    // pages as a request needs: the request's pages and the arenas they touch make one arena, the
+    // touched ones copied into it (MigrateBackedArenas). Arenas are runs of whole pages.
+    const u64 first_page = first_block >> blocks_per_arena_page_shift;
+    const u64 last_page = last_block >> blocks_per_arena_page_shift;
+    ASSERT_MSG(last_page < NUM_ARENA_PAGES,
+               "Guest GPU memory 0x{:x}-0x{:x} beyond the buffer cache's {}-bit address space",
+               first_block << block_shift, (last_block + 1) << block_shift, ADDRESS_SPACE_BITS);
+    const Buffer* arena = address_space[first_page];
+    bool covered = arena != nullptr;
+    for (u64 page = first_page + 1; covered && page <= last_page; ++page) {
+        covered = address_space[page] == arena;
+    }
+    if (covered) {
+        return arena;
+    }
+    u64 start_page = first_page;
+    u64 end_page = last_page + 1;
+    bool merged = false;
+    for (u64 page = first_page; page <= last_page; ++page) {
+        if (const Buffer* touched = address_space[page]) {
+            merged = true;
+            start_page = std::min<u64>(start_page, touched->cpu_addr >> ARENA_PAGE_BITS);
+            end_page = std::max<u64>(end_page,
+                                     (touched->cpu_addr + touched->size_bytes) >> ARENA_PAGE_BITS);
+        }
+    }
+    if (merged) {
+        // The arenas bordering the run join it too: a run growing a page at a time would merge
+        // again at every step.
+        for (bool grew = true; grew;) {
+            grew = false;
+            if (start_page > 0 && address_space[start_page - 1]) {
+                const Buffer* left = address_space[start_page - 1];
+                const u64 left_page = left->cpu_addr >> ARENA_PAGE_BITS;
+                if (((end_page - left_page) << ARENA_PAGE_BITS) <= max_backed_arena_bytes) {
+                    start_page = left_page;
+                    grew = true;
+                }
+            }
+            if (end_page < NUM_ARENA_PAGES && address_space[end_page]) {
+                const Buffer* right = address_space[end_page];
+                const u64 right_end = (right->cpu_addr + right->size_bytes) >> ARENA_PAGE_BITS;
+                if (((right_end - start_page) << ARENA_PAGE_BITS) <= max_backed_arena_bytes) {
+                    end_page = right_end;
+                    grew = true;
+                }
+            }
+        }
+    }
+    const u64 size = (end_page - start_page) << ARENA_PAGE_BITS;
+    ASSERT_MSG(size <= max_backed_arena_bytes,
+               "An arena of {} MiB for guest 0x{:x}-0x{:x} exceeds the {} MiB the driver takes",
+               size >> 20, start_page << ARENA_PAGE_BITS, end_page << ARENA_PAGE_BITS,
+               max_backed_arena_bytes >> 20);
+    std::vector<const Buffer*> replaced;
+    for (u64 page = start_page; page < end_page; ++page) {
+        if (address_space[page] &&
+            std::ranges::find(replaced, address_space[page]) == replaced.end()) {
+            replaced.push_back(address_space[page]);
+        }
+    }
+    const auto* new_arena = &arenas.emplace_back(instance, start_page << ARENA_PAGE_BITS, size,
+                                                 MemoryType::Backed);
+    backed_arena_bytes += size;
+    std::fprintf(stderr,
+                 "Buffer cache: arena guest 0x%llx-0x%llx with its own memory (%llu MiB%s); "
+                 "%llu MiB in %zu arenas\n",
+                 static_cast<unsigned long long>(new_arena->cpu_addr),
+                 static_cast<unsigned long long>(new_arena->cpu_addr + size),
+                 static_cast<unsigned long long>(size >> 20), merged ? ", merged" : "",
+                 static_cast<unsigned long long>(backed_arena_bytes >> 20), arenas.size());
+    if (merged) {
+        MigrateBackedArenas(new_arena, start_page << blocks_per_arena_page_shift,
+                            end_page << blocks_per_arena_page_shift);
+    }
+    for (u64 page = start_page; page < end_page; ++page) {
+        address_space[page] = new_arena;
+    }
+    // The replaced arenas are read by the copies just recorded and by bindings of the draw being
+    // prepared: freed two submissions later.
+    for (const Buffer* old : replaced) {
+        retired_arenas.push_back({scheduler.CurrentTick() + 2, old});
+    }
+    return new_arena;
+}
+
+void BufferCache::MigrateBackedArenas(const Buffer* merged, u64 base_block, u64 end_block) {
+    struct Moved {
+        u64 start, end;
+        const Buffer* source;
+        u64 source_offset; // bytes
+    };
+    std::vector<Moved> moved;
+    resident_ranges.ForEachInRange(base_block, end_block, [&](const Backing& backing) {
+        const Buffer* source = nullptr;
+        for (const auto& old : arenas) {
+            if (&old != merged && old.BackingMemory() == backing.memory) {
+                source = &old;
+                break;
+            }
+        }
+        ASSERT_MSG(source, "A resident block of a merged arena lies in no arena");
+        const u64 start = std::max(base_block, backing.start);
+        const u64 end = std::min(end_block, backing.end);
+        moved.push_back({start, end, source, (backing.offset + (start - backing.start)) << block_shift});
+    });
+    if (moved.empty()) {
+        return;
+    }
+    u64 total_blocks = 0;
+    for (const auto& range : moved) {
+        total_blocks += range.end - range.start;
+    }
+    boost::container::small_vector<vk::BufferCopy, 8> table_copies;
+    const auto staging =
+        staging_pool.Request(total_blocks * sizeof(vk::DeviceAddress), MemoryType::HostUncached);
+    auto* bda_addrs = reinterpret_cast<vk::DeviceAddress*>(staging.mapped);
+    u64 staging_offset = staging.offset;
+    for (const auto& range : moved) {
+        const u64 new_offset = (range.start << block_shift) - merged->cpu_addr;
+        for (u64 block = range.start; block < range.end; ++block) {
+            *(bda_addrs++) =
+                merged->BufferDeviceAddress() + new_offset + ((block - range.start) << block_shift);
+        }
+        const u64 table_size = (range.end - range.start) * sizeof(vk::DeviceAddress);
+        table_copies.push_back(vk::BufferCopy{
+            .srcOffset = staging_offset,
+            .dstOffset = range.start * sizeof(vk::DeviceAddress),
+            .size = table_size,
+        });
+        staging_offset += table_size;
+    }
+    std::vector<const Buffer*> sources;
+    for (const auto& range : moved) {
+        if (std::ranges::find(sources, range.source) == sources.end()) {
+            sources.push_back(range.source);
+        }
+    }
+    u64 moved_bytes = 0;
+    for (const Buffer* source : sources) {
+        boost::container::small_vector<vk::BufferCopy, 8> copies;
+        for (const auto& range : moved) {
+            if (range.source == source) {
+                copies.push_back(vk::BufferCopy{
+                    .srcOffset = range.source_offset,
+                    .dstOffset = (range.start << block_shift) - merged->cpu_addr,
+                    .size = (range.end - range.start) << block_shift,
+                });
+                moved_bytes += copies.back().size;
+            }
+        }
+        runtime.CopyBuffer(source, merged, copies);
+    }
+    staging.Flush();
+    runtime.CopyBuffer(staging.buffer, bda_pagetable_buffer.get(), table_copies);
+    // The moved blocks now live in the merged arena's memory (offsets in blocks).
+    for (const auto& range : moved) {
+        resident_ranges.Subtract(range.start, range.end);
+        Backing backing;
+        backing.start = range.start;
+        backing.end = range.end;
+        backing.memory = merged->BackingMemory();
+        backing.offset = range.start - (merged->cpu_addr >> block_shift);
+        resident_ranges.Add(backing);
+    }
+    ++resident_version;
+    std::fprintf(stderr, "Buffer cache: %llu MiB of %zu arenas copied into the merged one\n",
+                 static_cast<unsigned long long>(moved_bytes >> 20), sources.size());
+}
+
+void BufferCache::ReleaseRetiredArenas() {
+    u64 released = 0;
+    while (!retired_arenas.empty() && scheduler.IsFree(retired_arenas.front().tick)) {
+        const Buffer* old = retired_arenas.front().arena;
+        retired_arenas.pop_front();
+        for (auto& arena : arenas) {
+            if (&arena != old || !arena.Handle()) {
+                continue;
+            }
+            backed_arena_bytes -= arena.size_bytes;
+            released += arena.size_bytes;
+            arena.buffer.Destroy(); // the VkBuffer and its memory
+            break;
+        }
+    }
+    if (released) {
+        std::fprintf(stderr, "Buffer cache: %llu MiB of replaced arenas freed; %llu MiB in use\n",
+                     static_cast<unsigned long long>(released >> 20),
+                     static_cast<unsigned long long>(backed_arena_bytes >> 20));
+    }
+}
+
 void BufferCache::EnsureResident(const Buffer* arena, u64 first_block, u64 last_block) {
     // sotc: SOTC_RELEASE_DEFER: blocks used again before their release went: released now (the
     // old way), so the deferred unbind cannot take them away from the new use later.
@@ -2610,16 +2852,21 @@ void BufferCache::EnsureResident(const Buffer* arena, u64 first_block, u64 last_
 
     // Memory first: running out of it may submit work (see AllocateArenaBlocks), which must not
     // happen with half of the binds queued.
+    // sotc-android: an arena that owns its memory has every block in place: nothing is allocated
+    // or bound, only the page table entries below are written.
     boost::container::small_vector<std::pair<vk::DeviceMemory, u64>, 8> placements;
     for (const auto& range : bind_ranges) {
-        placements.push_back(AllocateArenaBlocks(range.end - range.start));
+        placements.push_back(non_sparse_arenas
+                                 ? std::pair{arena->BackingMemory(),
+                                             range.start - (arena->cpu_addr >> block_shift)}
+                                 : AllocateArenaBlocks(range.end - range.start));
     }
 
     boost::container::small_vector<vk::BufferCopy, 8> copies;
     const auto staging =
         staging_pool.Request(resident_blocks * sizeof(vk::DeviceAddress), MemoryType::HostUncached);
 
-    ArenaBinds* binds = BindsForArena(arena);
+    ArenaBinds* binds = non_sparse_arenas ? nullptr : BindsForArena(arena);
     auto* bda_addrs = reinterpret_cast<vk::DeviceAddress*>(staging.mapped);
     u64 offset = staging.offset;
     size_t placement_index = 0;
@@ -2635,12 +2882,15 @@ void BufferCache::EnsureResident(const Buffer* arena, u64 first_block, u64 last_
 
         LOG_INFO(Render, "Making range start={}, end={} resident", backing.start, backing.end);
 
-        const auto& bind = binds->binds.emplace_back(vk::SparseMemoryBind{
+        const vk::SparseMemoryBind bind{
             .resourceOffset = (range.start << block_shift) - arena->cpu_addr,
             .size = (range.end - range.start) << block_shift,
             .memory = device_memory,
             .memoryOffset = memory_block << block_shift,
-        });
+        };
+        if (binds) {
+            binds->binds.push_back(bind);
+        }
 
         for (u32 block = 0; block < bind.size; block += block_size) {
             *(bda_addrs++) = arena->BufferDeviceAddress() + bind.resourceOffset + block;
@@ -3130,6 +3380,13 @@ void BufferCache::ReleaseBlocks(u64 first_block, u64 end_block, bool finish) {
 
 void BufferCache::UnbindResident(std::span<const Backing> released) {
     for (const Backing& range : released) {
+        if (non_sparse_arenas) {
+            // sotc-android: the blocks are the arena's own memory: only the page table entries go
+            // (a shader touching them faults them back in through the fault buffer).
+            runtime.FillBuffer(bda_pagetable_buffer.get(), range.start * sizeof(vk::DeviceAddress),
+                               (range.end - range.start) * sizeof(vk::DeviceAddress), 0u);
+            continue;
+        }
         // Split at arena page boundaries, each page may belong to a different arena.
         for (u64 start = range.start; start < range.end;) {
             const u64 page = start >> blocks_per_arena_page_shift;
@@ -3153,6 +3410,9 @@ void BufferCache::UnbindResident(std::span<const Backing> released) {
 }
 
 bool BufferCache::MaybeEvictCold(std::chrono::steady_clock::time_point now) {
+    if (non_sparse_arenas) {
+        return false; // sotc-android: arena memory is committed with the arena; nothing to give back
+    }
     // sotc: the game keeps its 4 GiB direct memory pool mapped and hands its addresses out
     // again and again, so arena blocks became resident once and stayed: ~45 MB/min in the
     // attract demo, over the 6 GB card's budget after ~40 minutes. Once resident arena memory
@@ -3454,6 +3714,9 @@ void BufferCache::SubmitPendingArenaBinds(Vulkan::SubmitInfo& info) {
     // the next graphics submit as well.
     if (const u64 owed = std::exchange(unwaited_bind_tick, 0); owed != 0) {
         info.AddWaitAll(memory_semaphore.Handle(), owed);
+    }
+    if (non_sparse_arenas && !retired_arenas.empty()) {
+        ReleaseRetiredArenas(); // sotc-android: merged arenas' predecessors the GPU is done with
     }
     if (pending_binds.empty()) {
         return;

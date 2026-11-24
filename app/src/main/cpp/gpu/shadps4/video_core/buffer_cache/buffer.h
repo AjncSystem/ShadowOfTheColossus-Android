@@ -33,6 +33,10 @@ enum class MemoryType : u8 {
     HostCached,   ///< Requires a host visible memory type optimized for GPU to CPU readbacks
     Stream,       ///< Requests device local host visible buffer, falling back host memory.
     Sparse,       ///< Requires an unbacked sparse resident buffer.
+    /// sotc-android (after uncharted-android / Bloodborne-Android, GPL-2.0): a plain buffer that
+    /// owns one dedicated memory of its full size, bound at creation: the buffer cache's arenas
+    /// without sparse binding (BB_NONSPARSE_ARENAS).
+    Backed,
 };
 
 constexpr vk::BufferUsageFlags ReadFlags =
@@ -54,7 +58,10 @@ struct UniqueBuffer {
         : device{other.device}, buffer{std::exchange(other.buffer, VK_NULL_HANDLE)},
           bda_addr{std::exchange(other.bda_addr, 0)},
           allocator{std::exchange(other.allocator, VK_NULL_HANDLE)},
-          allocation{std::exchange(other.allocation, VK_NULL_HANDLE)} {}
+          allocation{std::exchange(other.allocation, VK_NULL_HANDLE)},
+          memory{std::exchange(other.memory, VK_NULL_HANDLE)},
+          memory_size{std::exchange(other.memory_size, 0)},
+          memory_type{std::exchange(other.memory_type, 0)} {}
 
     UniqueBuffer& operator=(UniqueBuffer&& other) noexcept {
         if (this != &other) {
@@ -64,6 +71,9 @@ struct UniqueBuffer {
             bda_addr = std::exchange(other.bda_addr, 0);
             allocator = std::exchange(other.allocator, VK_NULL_HANDLE);
             allocation = std::exchange(other.allocation, VK_NULL_HANDLE);
+            memory = std::exchange(other.memory, VK_NULL_HANDLE);
+            memory_size = std::exchange(other.memory_size, 0);
+            memory_type = std::exchange(other.memory_type, 0);
         }
         return *this;
     }
@@ -78,6 +88,10 @@ struct UniqueBuffer {
     vk::DeviceAddress bda_addr{};
     VmaAllocator allocator;
     VmaAllocation allocation{};
+    /// MemoryType::Backed: the buffer's own memory (freed with it), its size and type index.
+    vk::DeviceMemory memory{};
+    u64 memory_size{};
+    u32 memory_type{};
 };
 
 struct Buffer {
@@ -121,6 +135,14 @@ struct Buffer {
     vk::DeviceAddress BufferDeviceAddress() const noexcept {
         ASSERT_MSG(buffer.bda_addr != 0, "Can't get BDA from a non BDA buffer");
         return buffer.bda_addr;
+    }
+
+    /// MemoryType::Backed: the memory the whole buffer is bound to (at offset 0), and its type.
+    vk::DeviceMemory BackingMemory() const noexcept {
+        return buffer.memory;
+    }
+    u32 BackingMemoryType() const noexcept {
+        return buffer.memory_type;
     }
 
     /// Makes host writes in provided range visible to the device.
