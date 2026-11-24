@@ -1,56 +1,57 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 package io.github.ajncsystem.sotc;
 
-import android.content.Intent;
-import android.net.Uri;
 import android.os.Bundle;
 import android.os.Environment;
-import android.provider.Settings;
 import android.system.Os;
 import android.util.Log;
 import android.view.WindowManager;
 
 import org.libsdl.app.SDLActivity;
 
+import java.io.File;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 /**
- * Entry activity. SDL3 owns the surface, input and the native main thread; this class only
- * prepares what the native side needs before SDL_main runs (GPU driver, paths) and passes it as
- * argv.
+ * The game. Runs in its own process (":game"), started by LauncherActivity. SDL3 owns the
+ * surface, input and the native main thread; this class turns the launcher's settings into the
+ * game's environment (as SotC-PC's launcher does) and passes paths and the GPU driver as argv.
  */
 public class SotcActivity extends SDLActivity {
     static final String TAG = "SotC";
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
-        // The GPU library computes its cache folders in static constructors, when libmain.so
-        // loads (inside super.onCreate): its environment must be in place before that.
+        // The GPU library reads its environment in static constructors, when libmain.so loads
+        // (inside super.onCreate): everything must be in place before that.
+        Settings settings = new Settings(this);
         try {
-            java.io.File ext = getExternalFilesDir(null);
-            java.io.File gpuDir = new java.io.File(ext != null ? ext : getFilesDir(), "user/gpu");
+            File ext = getExternalFilesDir(null);
+            File user = new File(ext != null ? ext : getFilesDir(), "user");
+            File gpuDir = new File(user, "gpu");
             //noinspection ResultOfMethodCallIgnored
             gpuDir.mkdirs();
             Os.setenv("BB_GPU_USER_DIR", gpuDir.getAbsolutePath(), true);
             Os.setenv("HOME", getFilesDir().getAbsolutePath(), false);
+            for (Map.Entry<String, String> e : settings.gameEnvironment(this).entrySet()) {
+                Os.setenv(e.getKey(), e.getValue(), true);
+            }
+            Log.i(TAG, "game environment: " + settings.gameEnvironment(this));
         } catch (Exception e) {
             Log.e(TAG, "cannot set the native environment", e);
         }
         super.onCreate(savedInstanceState);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
-        // The game dump usually lives outside the app's folder (e.g. "PlayStation 4" on the SD
-        // card): ask once for "All files access". The game starts on the next launch after it
-        // is allowed.
-        if (!Environment.isExternalStorageManager()) {
-            Log.i(TAG, "asking for All files access to read the game dump");
-            try {
-                startActivity(new Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
-                                         Uri.parse("package:" + getPackageName())));
-            } catch (Exception e) {
-                startActivity(new Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION));
-            }
-        }
+    }
+
+    @Override
+    protected void onDestroy() {
+        super.onDestroy();
+        // The game cannot be restarted inside the same process (guest state, FEX, Vulkan): end
+        // the ":game" process so the next JOGAR starts clean.
+        if (isFinishing()) System.exit(0);
     }
 
     @Override
@@ -60,19 +61,20 @@ public class SotcActivity extends SDLActivity {
 
     @Override
     protected String[] getArguments() {
+        Settings settings = new Settings(this);
         List<String> args = new ArrayList<>();
         args.add("--native-lib-dir");
         args.add(getApplicationInfo().nativeLibraryDir);
         args.add("--files-dir");
         args.add(getFilesDir().getAbsolutePath());
-        java.io.File ext = getExternalFilesDir(null);
+        File ext = getExternalFilesDir(null);
         if (ext != null) {
             args.add("--external-dir");
             args.add(ext.getAbsolutePath());
         }
 
-        java.io.File game = GameLocator.find(this);
-        if (game != null) {
+        File game = settings.str("game_dir").isEmpty() ? GameLocator.find(this) : new File(settings.str("game_dir"));
+        if (game != null && new File(game, "eboot.bin").isFile()) {
             args.add("--app0");
             args.add(game.getAbsolutePath());
         } else {
@@ -81,7 +83,7 @@ public class SotcActivity extends SDLActivity {
 
         DriverInstaller.Driver driver = null;
         try {
-            driver = DriverInstaller.prepare(this);
+            driver = DriverInstaller.prepare(this, settings.str("driver"));
         } catch (Exception e) {
             Log.e(TAG, "GPU driver setup failed, falling back to the system driver", e);
         }

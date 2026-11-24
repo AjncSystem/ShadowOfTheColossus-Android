@@ -45,7 +45,17 @@ static uint64_t pool_size_bytes(void) {
 #define FLEXIBLE_SIZE (UINT64_C(448) * 1024 * 1024)
 #define PAGE UINT64_C(16384)
 #define USER_MIN UINT64_C(0x1000000000)
+#ifdef SOTC_ANDROID
+/* sotc-android: a 39-bit address space ends at 512 GiB, and the system places libraries, the
+ * heap and the GPU driver's buffers anywhere in it. The guest window is 64 GiB that
+ * runtime_memory_reserve() holds as PROT_NONE before the driver loads, so the MAP_FIXED
+ * mappings below only ever replace the runtime's own reservation (as the Windows placeholders
+ * do). Without it a guest mapping could land on the driver's command buffers (CP opcode errors,
+ * Vulkan device lost). */
+#define USER_MAX UINT64_C(0x2000000000)
+#else
 #define USER_MAX UINT64_C(0xfc00000000)
+#endif
 #define SYSTEM_LOW_MIN UINT64_C(0x0700000000)
 #define SYSTEM_LOW_MAX UINT64_C(0x0800000000)
 #define LIMIT 4096
@@ -710,7 +720,30 @@ static int pool(void) {
     backing_base=view;
     return 0;
 }
+#ifdef SOTC_ANDROID
+/* Holds [lo,hi) as PROT_NONE without replacing anything: 1 GiB steps, busy ones reported. */
+static void reserve_window(const char *what, uintptr_t lo, uintptr_t hi) {
+    const uintptr_t step=UINT64_C(1)<<30;
+    unsigned busy=0;
+    for (uintptr_t at=lo; at<hi; at+=step) {
+        void *p=mmap((void *)at,step,PROT_NONE,MAP_PRIVATE|MAP_ANONYMOUS|MAP_NORESERVE|MAP_FIXED_NOREPLACE,-1,0);
+        if (p==MAP_FAILED || (uintptr_t)p!=at) {
+            if (p!=MAP_FAILED) munmap(p,step);
+            if (busy++<8) fprintf(stderr,"Runtime: %s: %p +1 GiB already in use by the host\n",what,(void *)at);
+        }
+    }
+    fprintf(stderr,"Runtime: %s reserved [%p, %p), %u GiB busy\n",what,(void *)lo,(void *)hi,busy);
+}
+void runtime_memory_reserve(void) {
+    static int done;
+    if (done) return;
+    done=1;
+    reserve_window("PS4 address range",USER_MIN,USER_MAX);
+    reserve_window("PS4 system-managed window",SYSTEM_LOW_MIN,SYSTEM_LOW_MAX);
+}
+#else
 void runtime_memory_reserve(void) {}
+#endif
 /* mmap(MAP_FIXED) replaces mappings in place: a live view is never split here (SOTC_FPS report). */
 uint64_t runtime_memory_carve_splits(void) { return 0; }
 static int host_map(uintptr_t address, uint64_t size, int prot, int reserved, uint64_t phys) {
@@ -719,7 +752,14 @@ static int host_map(uintptr_t address, uint64_t size, int prot, int reserved, ui
         : mmap((void *)address,size,PROT_NONE,MAP_PRIVATE|MAP_ANONYMOUS|MAP_NORESERVE|MAP_FIXED,-1,0);
     return mapped==MAP_FAILED ? -1 : 0;
 }
+#ifdef SOTC_ANDROID
+/* back to the reservation: a hole would let the host map its own memory into the guest window */
+static int host_unmap(uintptr_t address, uint64_t size) {
+    return mmap((void *)address,size,PROT_NONE,MAP_PRIVATE|MAP_ANONYMOUS|MAP_NORESERVE|MAP_FIXED,-1,0)==MAP_FAILED ? -1 : 0;
+}
+#else
 static int host_unmap(uintptr_t address, uint64_t size) { return munmap((void *)address,size); }
+#endif
 static int host_protect(uintptr_t address, uint64_t size, int prot) { return mprotect((void *)address,size,prot); }
 static void host_discard(uint64_t phys, uint64_t size) {
     fallocate(pool_fd,FALLOC_FL_PUNCH_HOLE|FALLOC_FL_KEEP_SIZE,(off_t)phys,(off_t)size);
@@ -1000,6 +1040,11 @@ static void views_protect(uintptr_t address, uint64_t size, int read, int write)
  * elsewhere since reads as not committed, and the release skips it. */
 static uintptr_t *page_owner; static uint64_t page_owner_count, owner_skipped_pages, owner_skips;
 static uintptr_t release_site; /* return address of the release's VirtualQuery (probe.c) */
+#ifdef SOTC_ANDROID /* the game runs on FEX: the guest's return address, not the HLE bridge's */
+#define SOTC_CALLER_ADDRESS() sotc_guest_return_address()
+#else
+#define SOTC_CALLER_ADDRESS() ((uintptr_t)__builtin_return_address(0))
+#endif
 static int pool_owner_on(void) {
     static int on=-1;
     if (on<0) { const char *v=getenv("SOTC_POOL_OWNER"); on=!(v && v[0]=='0'); }
@@ -1397,7 +1442,7 @@ static ABI int32_t virtual_query(const void *address, int flags, VirtualQueryInf
     info->protection=v.prot; info->memory_type=v.type;
     info->flags=(v.kind==KIND_FLEXIBLE ? 1u : 0) | (v.kind==KIND_DIRECT ? 2u : 0) | (v.kind!=KIND_RESERVED ? 16u : 0);
     /* sotc: T38, the pool release asking about pages another block owns now (owner_note) */
-    if (release_site && page_owner && v.kind==KIND_DIRECT && (uintptr_t)__builtin_return_address(0)==release_site &&
+    if (release_site && page_owner && v.kind==KIND_DIRECT && SOTC_CALLER_ADDRESS()==release_site &&
         (uintptr_t)address>=v.start) {
         const uintptr_t page=(uintptr_t)address & ~(uintptr_t)0xffff;
         uintptr_t at=page<v.start ? v.start : page;

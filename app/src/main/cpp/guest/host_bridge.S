@@ -36,3 +36,30 @@ sotc_call_host:
     .size sotc_call_host, . - sotc_call_host
 
     .section .note.GNU-stack, "", %progbits
+
+// uint64_t sotc_safe_load64(uint64_t address) / uint32_t sotc_safe_load32(uint64_t address)
+// Loads that read zero instead of crashing: the app's SIGSEGV handler (guest_cpu.cpp) sees the
+// fault at the *_insn label, sets x0 = 0 and resumes after it. For readers of guest tables that
+// may hold stale pointers (the SRT walker), as SotC-PC's x86 fault handler skips such loads.
+    .text
+    .p2align 4
+    .globl sotc_safe_load64
+    .type sotc_safe_load64, %function
+sotc_safe_load64:
+    hint #34                    // bti c
+    .globl sotc_safe_load64_insn
+sotc_safe_load64_insn:
+    ldr x0, [x0]
+    ret
+    .size sotc_safe_load64, .-sotc_safe_load64
+
+    .p2align 4
+    .globl sotc_safe_load32
+    .type sotc_safe_load32, %function
+sotc_safe_load32:
+    hint #34                    // bti c
+    .globl sotc_safe_load32_insn
+sotc_safe_load32_insn:
+    ldr w0, [x0]
+    ret
+    .size sotc_safe_load32, .-sotc_safe_load32

@@ -254,6 +254,54 @@ Próximos passos do M4:
 A preparação da imagem (`scripts/*.py` do SotC-PC) roda no PC no começo; o APK recebe a pasta
 `out/` pronta. Portar a preparação para o aparelho fica para depois de M5.
 
+### Launcher (24/11/2026)
+
+O app abre no `LauncherActivity`, com as páginas do launcher do SotC-PC (Jogar, Jogo e saves,
+Imagem e FPS, Controles e som, Driver de vídeo, Avançado). O ícone é o do SotC-PC (o rosto do
+colosso, `launcher/make_icon.py`) e o espadachim do `window_icon.png` fica no topo do menu.
+
+- `Settings.java` guarda as escolhas e monta o ambiente do jogo como o `game_environment()` do
+  `sotc_launcher_win.py` (modos de jogo, FPS, texturas, efeitos, VRAM, FSR1/RCAS), mais as opções
+  do Android (driver, `TU_DEBUG`, TSO do FEX, autoteste).
+- O `SotcActivity` roda no processo `:game`: aplica esse ambiente com `Os.setenv` antes de carregar
+  o `libmain.so` e termina o processo ao fechar, para a próxima partida começar limpa.
+- `loader/sotc_modes.cpp` aplica na memória, depois das relocações, o que o `sotc_modes.py` gera
+  no PC (`patches.bin` e `cmdline.bin`): fps60, fps60game, grassbuf, af16, hdr, a correção do
+  alocador de páginas, a reserva de texturas no modo Pro e as cvars na linha de comando do motor
+  (o `lea` de `+VSyncWindow=10%` aponta para o texto no fim da área de trampolins).
+- `bbgpu_set_fps_target_slot` (fps60game) e `runtime_memory_set_release_site` (T38, dono das
+  páginas do pool) ligados como no `probe.c`. Sob o FEX o `__builtin_return_address(0)` do
+  runtime é o da ponte HLE; `sotc_guest_return_address()` dá o endereço de retorno do jogo.
+- O autoteste do M1 só roda quando ligado no launcher; sem ele, o FEX inicia direto.
+- O SRT walker lê a memória do jogo por `sotc_safe_load32/64` (`guest/host_bridge.S`): um ponteiro
+  velho (visto: `0x9bc00`) lê zero, como no handler x86 do PC, em vez de derrubar a thread de shaders.
+- A janela de endereços do PS4 (`USER_MIN`..) fica reservada (`PROT_NONE`) no início do `main`,
+  antes do driver: no Android (39 bits, 512 GiB) a janela do PC (até `0xfc00000000`) cobria o
+  espaço inteiro do processo e o `MAP_FIXED` do runtime podia cair sobre memória do sistema.
+  Agora são 64 GiB, e liberar devolve à reserva em vez de `munmap`.
+
+### Queda da GPU (24/11/2026): o que já foi descartado
+
+O jogo chega ao loop principal e desenha a 25–30 FPS, mas o kgsl derruba o contexto entre 15 s e
+4,5 min: `CP Protected mode error | WRITE | addr=0x08847`, `CP DDE BR opcode error | opcode=0`,
+`CP BV opcode error | opcode=0x70970001` ou `RBBM: GPC error` → `Vulkan device lost`. Testado,
+sem mudar o resultado (um jogo de 1,5 a 3 min cada):
+
+| Teste | Resultado |
+|---|---|
+| Turnip Gen8 V36 | cai (30 s) |
+| Driver Qualcomm do sistema | sai com código 23 no primeiro shader |
+| `TU_DEBUG=sysmem` | cai (66 s) |
+| `TU_DEBUG=flushall,syncdraw` | cai (35 s) |
+| `SOTC_RECORD_THREAD=0` | cai (15 s) |
+| `BB_DIRECT_MEMORY_ACCESS=0` | cai (152 s) |
+| `SOTC_RB_HOT=0` | cai (30 s) |
+| janela de memória reservada | cai (56 s) |
+
+Próximo: achar qual envio quebra (registro dos últimos envios antes da queda, `TU_DEBUG=rd` para
+gravar o fluxo de comandos) e o uso de buffers esparsos (o buffer cache do SotC é um arena esparso
+de 16 GB; o suporte esparso do Turnip no a8xx é novo).
+
 ## Referências
 
 - SotC-PC: carregador (`src/probe.c`), runtime (`src/runtime_*.c`), vídeo (`gpu/`).

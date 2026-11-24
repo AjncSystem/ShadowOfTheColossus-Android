@@ -34,6 +34,10 @@
 #include "shader_recompiler/ir/srt_gvn_table.h"
 #include "shader_recompiler/ir/value.h"
 
+// Loads that read zero at an unmapped address (the app's guest/host_bridge.S + SIGSEGV handler).
+extern "C" uint64_t sotc_safe_load64(uint64_t address);
+extern "C" uint32_t sotc_safe_load32(uint64_t address);
+
 namespace Shader {
 
 namespace {
@@ -110,9 +114,14 @@ T GuestLoad(const SrtWalkerContext* ctx, u64 address) {
             }
         }
     }
-    T value;
-    std::memcpy(&value, reinterpret_cast<const void*>(address), sizeof(T));
-    return value;
+    // A stale table pointer (seen: 0x9bc00) reads zero instead of crashing the pipeline worker,
+    // as the SotC x86 fault handler does for the Xbyak walker.
+    if constexpr (sizeof(T) == 8) {
+        return static_cast<T>(sotc_safe_load64(address));
+    } else {
+        static_assert(sizeof(T) == 4);
+        return static_cast<T>(sotc_safe_load32(address));
+    }
 }
 
 } // namespace

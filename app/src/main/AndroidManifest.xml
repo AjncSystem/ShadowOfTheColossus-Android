@@ -13,7 +13,7 @@
     <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
 
     <application
-        android:label="SotC Android"
+        android:label="Shadow of the Colossus"
         android:icon="@mipmap/ic_launcher"
         android:appCategory="game"
         android:isGame="true"
@@ -22,20 +22,31 @@
         android:hardwareAccelerated="true"
         android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen">
 
+        <!-- The launcher (settings, game folder, GPU driver), as SotC-PC's launcher. -->
         <activity
-            android:name=".SotcActivity"
+            android:name=".LauncherActivity"
             android:exported="true"
-            android:label="SotC Android"
-            android:launchMode="singleInstance"
+            android:label="Shadow of the Colossus"
             android:screenOrientation="sensorLandscape"
-            android:resizeableActivity="false"
-            android:preferMinimalPostProcessing="true"
-            android:configChanges="layoutDirection|locale|grammaticalGender|fontScale|fontWeightAdjustment|orientation|uiMode|screenLayout|screenSize|smallestScreenSize|keyboard|keyboardHidden|navigation">
+            android:theme="@android:style/Theme.DeviceDefault.NoActionBar.Fullscreen"
+            android:configChanges="orientation|screenSize|screenLayout|keyboard|keyboardHidden|navigation">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
                 <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- The game, in its own process: closing it frees all of its memory and the next start is clean. -->
+        <activity
+            android:name=".SotcActivity"
+            android:exported="false"
+            android:process=":game"
+            android:label="Shadow of the Colossus"
+            android:launchMode="singleInstance"
+            android:screenOrientation="sensorLandscape"
+            android:resizeableActivity="false"
+            android:preferMinimalPostProcessing="true"
+            android:configChanges="layoutDirection|locale|grammaticalGender|fontScale|fontWeightAdjustment|orientation|uiMode|screenLayout|screenSize|smallestScreenSize|keyboard|keyboardHidden|navigation" />
     </application>
 </manifest>

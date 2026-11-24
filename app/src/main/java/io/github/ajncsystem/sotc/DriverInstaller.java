@@ -2,10 +2,12 @@
 package io.github.ajncsystem.sotc;
 
 import android.content.Context;
+import android.os.Environment;
 import android.util.Log;
 
 import org.json.JSONObject;
 
+import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
@@ -14,21 +16,18 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
-import java.util.Arrays;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 
 /**
- * Installs an adrenotools driver package (.zip with meta.json + the Vulkan .so) into app-private
- * storage, where the linker is allowed to dlopen it.
- *
- * Package lookup, first match wins:
- *  1. {externalFilesDir}/drivers/selected.txt naming a zip in that folder;
- *  2. {externalFilesDir}/drivers/Turnip_Gen8_V38.zip;
- *  3. the newest zip in {externalFilesDir}/drivers;
- *  4. assets/Turnip_Gen8_V38.zip bundled in the APK.
- * {externalFilesDir} is /sdcard/Android/data/io.github.ajncsystem.sotc/files and can be written
- * with `adb push`. A file named "system" in selected.txt keeps the system (Qualcomm) driver.
+ * GPU driver packages for libadrenotools (.zip with meta.json + the Vulkan .so, the format Eden,
+ * Bachata S4 and the other emulators use). The launcher's choice (Settings "driver") is one of
+ *   "system"                the device's own Qualcomm driver;
+ *   "bundled:NAME.zip"      a package shipped in the APK's assets;
+ *   "file:/path/NAME.zip"   any package on the device (Downloads, SD card...).
+ * The chosen package is extracted into app-private storage, where the linker may dlopen it.
  */
 final class DriverInstaller {
     static final String DEFAULT_PACKAGE = "Turnip_Gen8_V38.zip";
@@ -45,52 +44,133 @@ final class DriverInstaller {
         }
     }
 
+    /** A package the launcher can offer. */
+    static final class Entry {
+        final String value;        // Settings value
+        final String title;        // meta.json name, or the file name
+        final String detail;       // description / version / where it is
+        Entry(String value, String title, String detail) {
+            this.value = value;
+            this.title = title;
+            this.detail = detail;
+        }
+    }
+
     private DriverInstaller() {}
 
-    static Driver prepare(Context ctx) throws IOException {
-        File extDrivers = null;
-        File ext = ctx.getExternalFilesDir(null);
-        if (ext != null) {
-            extDrivers = new File(ext, "drivers");
-            //noinspection ResultOfMethodCallIgnored
-            extDrivers.mkdirs();
-        }
+    // ---- discovery ----------------------------------------------------------------------------
 
-        String selected = null;
-        if (extDrivers != null) {
-            File sel = new File(extDrivers, "selected.txt");
-            if (sel.isFile()) {
-                selected = new String(Files.readAllBytes(sel.toPath()), StandardCharsets.UTF_8).trim();
+    static List<Entry> discover(Context ctx) {
+        List<Entry> out = new ArrayList<>();
+        out.add(new Entry("system", "Driver do sistema (Qualcomm)", "o driver Adreno que vem no aparelho"));
+        try {
+            String[] assets = ctx.getAssets().list("");
+            if (assets != null) {
+                for (String a : assets) {
+                    if (!a.toLowerCase().endsWith(".zip")) continue;
+                    try (InputStream in = ctx.getAssets().open(a)) {
+                        JSONObject meta = readMeta(in);
+                        out.add(new Entry("bundled:" + a, title(meta, a), detail(meta, "embutido no app")));
+                    }
+                }
+            }
+        } catch (IOException e) {
+            Log.w(SotcActivity.TAG, "cannot list bundled drivers", e);
+        }
+        List<File> roots = new ArrayList<>();
+        File ext = ctx.getExternalFilesDir(null);
+        if (ext != null) roots.add(new File(ext, "drivers"));
+        roots.add(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS));
+        for (File root : roots) scan(root, 3, out);
+        return out;
+    }
+
+    private static void scan(File dir, int depth, List<Entry> out) {
+        File[] kids = dir.listFiles();
+        if (kids == null) return;
+        for (File f : kids) {
+            if (f.isDirectory()) {
+                if (depth > 0) scan(f, depth - 1, out);
+            } else if (f.getName().toLowerCase().endsWith(".zip") && f.length() < 256L << 20) {
+                try (InputStream in = new FileInputStream(f)) {
+                    JSONObject meta = readMeta(in);
+                    if (meta == null) continue;  // not a driver package
+                    out.add(new Entry("file:" + f.getAbsolutePath(), title(meta, f.getName()),
+                                      detail(meta, f.getParentFile() != null ? f.getParentFile().getName() : "")));
+                } catch (IOException ignored) {
+                }
             }
         }
-        if ("system".equalsIgnoreCase(selected)) {
-            Log.i(SotcActivity.TAG, "selected.txt asks for the system driver");
-            return null;
-        }
+    }
 
-        File source = pickExternal(extDrivers, selected);
-        String sourceName;
-        long stampSize;
-        long stampTime;
-        if (source != null) {
-            sourceName = source.getName();
-            stampSize = source.length();
-            stampTime = source.lastModified();
+    private static String title(JSONObject meta, String fallback) {
+        return meta != null ? meta.optString("name", fallback) : fallback;
+    }
+
+    private static String detail(JSONObject meta, String where) {
+        if (meta == null) return where;
+        String d = meta.optString("description", "");
+        String v = meta.optString("driverVersion", "");
+        StringBuilder s = new StringBuilder();
+        if (!d.isEmpty()) s.append(d);
+        if (!v.isEmpty()) s.append(s.length() > 0 ? " · " : "").append(v);
+        if (!where.isEmpty()) s.append(s.length() > 0 ? " · " : "").append(where);
+        return s.toString();
+    }
+
+    /** meta.json of a driver package, or null when the zip has none. */
+    static JSONObject readMeta(InputStream in) throws IOException {
+        try (ZipInputStream zin = new ZipInputStream(in)) {
+            ZipEntry e;
+            while ((e = zin.getNextEntry()) != null) {
+                if (new File(e.getName()).getName().equals("meta.json")) {
+                    ByteArrayOutputStream buf = new ByteArrayOutputStream();
+                    byte[] b = new byte[8192];
+                    int n;
+                    while ((n = zin.read(b)) > 0) buf.write(b, 0, n);
+                    try {
+                        return new JSONObject(buf.toString("UTF-8"));
+                    } catch (Exception ex) {
+                        return null;
+                    }
+                }
+            }
+        }
+        return null;
+    }
+
+    // ---- install ------------------------------------------------------------------------------
+
+    /** Extracts the chosen package; null for the system driver. */
+    static Driver prepare(Context ctx, String choice) throws IOException {
+        if (choice == null || choice.isEmpty()) choice = "bundled:" + DEFAULT_PACKAGE;
+        if (choice.equals("system")) return null;
+
+        final String sourceName;
+        final long stampSize, stampTime;
+        File file = null;
+        String asset = null;
+        if (choice.startsWith("file:")) {
+            file = new File(choice.substring(5));
+            if (!file.isFile()) throw new IOException("driver package missing: " + file);
+            sourceName = file.getName();
+            stampSize = file.length();
+            stampTime = file.lastModified();
         } else {
-            sourceName = DEFAULT_PACKAGE;
+            asset = choice.startsWith("bundled:") ? choice.substring(8) : choice;
+            sourceName = asset;
             stampSize = -1;
-            stampTime = ctx.getPackageManager() != null ? apkTime(ctx) : 0;
+            stampTime = apkTime(ctx);
         }
 
         String base = sourceName.endsWith(".zip") ? sourceName.substring(0, sourceName.length() - 4) : sourceName;
         File target = new File(new File(ctx.getFilesDir(), "drivers"), sanitize(base));
         File stamp = new File(target, ".stamp");
-        String wantStamp = sourceName + "|" + stampSize + "|" + stampTime;
-
+        String wantStamp = choice + "|" + stampSize + "|" + stampTime;
         if (!stamp.isFile() || !wantStamp.equals(readText(stamp))) {
             deleteTree(target);
             if (!target.mkdirs()) throw new IOException("cannot create " + target);
-            try (InputStream in = source != null ? new FileInputStream(source) : ctx.getAssets().open(DEFAULT_PACKAGE)) {
+            try (InputStream in = file != null ? new FileInputStream(file) : ctx.getAssets().open(asset)) {
                 unzip(in, target);
             }
             writeText(stamp, wantStamp);
@@ -116,19 +196,26 @@ final class DriverInstaller {
         return new Driver(name, target.getAbsolutePath() + "/", libraryName);
     }
 
-    private static File pickExternal(File dir, String selected) {
-        if (dir == null) return null;
-        if (selected != null && !selected.isEmpty()) {
-            File f = new File(dir, selected);
-            if (f.isFile()) return f;
-            Log.w(SotcActivity.TAG, "selected.txt names a missing file: " + selected);
+    /** Copies a package the user picked into the app's driver folder; returns its Settings value. */
+    static String importPackage(Context ctx, InputStream in, String fileName) throws IOException {
+        File ext = ctx.getExternalFilesDir(null);
+        File dir = new File(ext != null ? ext : ctx.getFilesDir(), "drivers");
+        //noinspection ResultOfMethodCallIgnored
+        dir.mkdirs();
+        File out = new File(dir, sanitize(fileName.toLowerCase().endsWith(".zip") ? fileName : fileName + ".zip"));
+        try (OutputStream os = new FileOutputStream(out)) {
+            byte[] buf = new byte[1 << 16];
+            int n;
+            while ((n = in.read(buf)) > 0) os.write(buf, 0, n);
         }
-        File def = new File(dir, DEFAULT_PACKAGE);
-        if (def.isFile()) return def;
-        File[] zips = dir.listFiles((d, n) -> n.toLowerCase().endsWith(".zip"));
-        if (zips == null || zips.length == 0) return null;
-        Arrays.sort(zips, (a, b) -> Long.compare(b.lastModified(), a.lastModified()));
-        return zips[0];
+        try (InputStream check = new FileInputStream(out)) {
+            if (readMeta(check) == null) {
+                //noinspection ResultOfMethodCallIgnored
+                out.delete();
+                throw new IOException("o arquivo não é um pacote de driver (sem meta.json)");
+            }
+        }
+        return "file:" + out.getAbsolutePath();
     }
 
     private static long apkTime(Context ctx) {
@@ -151,8 +238,7 @@ final class DriverInstaller {
             while ((e = zin.getNextEntry()) != null) {
                 if (e.isDirectory()) continue;
                 // Flatten: adrenotools wants meta.json and the library side by side.
-                String name = new File(e.getName()).getName();
-                File out = new File(target, name);
+                File out = new File(target, new File(e.getName()).getName());
                 if (!out.getCanonicalPath().startsWith(root)) throw new IOException("bad zip entry " + e.getName());
                 try (OutputStream os = new FileOutputStream(out)) {
                     int n;

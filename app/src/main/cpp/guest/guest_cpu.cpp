@@ -152,6 +152,16 @@ void SigsegvHandler(int sig, siginfo_t* info, void* raw) {
     if (auto* hook = g_fault_hook.load(std::memory_order_acquire); hook && info) {
         if (hook(raw, info->si_addr)) return;
     }
+    // sotc_safe_load32/64 (host_bridge.S): an unmapped guest address reads as zero.
+    if (raw) {
+        auto& mc = static_cast<ucontext_t*>(raw)->uc_mcontext;
+        if (mc.pc == reinterpret_cast<uintptr_t>(&sotc_safe_load64_insn) ||
+            mc.pc == reinterpret_cast<uintptr_t>(&sotc_safe_load32_insn)) {
+            mc.regs[0] = 0;
+            mc.pc += 4;
+            return;
+        }
+    }
     ChainSignal(g_previous_sigsegv, sig, info, raw);
 }
 
@@ -582,11 +592,18 @@ uint64_t GuestCpu::HleCallCount() const {
 // ---- generic bridge to native functions -------------------------------------------------------
 
 namespace {
+// The guest return address of the host function running on this thread (nested calls restore it).
+thread_local uintptr_t tls_guest_return = 0;
+
 uint64_t HleHostCall(HleCall& c) {
     uint64_t ints[8], fps[8], out[3];
     for (int i = 0; i < 8; ++i) ints[i] = c.Arg(i);
     for (int i = 0; i < 8; ++i) fps[i] = c.XmmLow(i);
+    // The stub runs right after the guest's `call`: its return address is on top of the stack.
+    const uintptr_t saved_return = tls_guest_return;
+    tls_guest_return = *reinterpret_cast<const uintptr_t*>(c.Rsp());
     const uint64_t rax = sotc_call_host(c.User(), ints, fps, out);
+    tls_guest_return = saved_return;
     c.SetRdx(out[0]);
     // XMM0/XMM1 are caller-saved in System V: always handing back d0/d1 is harmless for
     // functions that return an integer, and right for float/double/16-byte FP returns.
@@ -607,6 +624,10 @@ struct OwnedThread {
 };
 thread_local OwnedThread tls_owned;
 }  // namespace
+
+extern "C" uintptr_t sotc_guest_return_address(void) {
+    return tls_guest_return;
+}
 
 uint32_t GuestCpu::RegisterHostFunction(const char* name, const void* fn) {
     return RegisterHle(name, HleHostCall, const_cast<void*>(fn));

@@ -71,6 +71,25 @@ final class GameLocator {
         return null;
     }
 
+    /** The dump inside a folder the player picked (the folder itself, or a CUSA folder up to two levels down). */
+    static File findIn(File dir) {
+        if (isGame(dir)) return dir;
+        return search(dir, 2);
+    }
+
+    /** CUSA08809 / CUSA08034 from the folder name or sce_sys/param.sfo; "" when unknown. */
+    static String titleId(File dir) {
+        for (String s : SERIALS) if (dir.getName().startsWith(s)) return s;
+        try {
+            byte[] sfo = Files.readAllBytes(new File(dir, "sce_sys/param.sfo").toPath());
+            String text = new String(sfo, StandardCharsets.ISO_8859_1);
+            int i = text.indexOf("CUSA");
+            if (i >= 0 && i + 9 <= text.length()) return text.substring(i, i + 9);
+        } catch (Exception ignored) {
+        }
+        return "";
+    }
+
     private static boolean isGame(File dir) {
         return new File(dir, "eboot.bin").isFile() && new File(dir, "sce_sys/param.sfo").isFile();
     }

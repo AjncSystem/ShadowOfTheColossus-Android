@@ -4,25 +4,42 @@ Port do [Shadow of the Colossus — PC](https://github.com/AjncSystem/ShadowOfTh
 (PS4 CUSA08809/CUSA08034) para Android ARM64. Aparelho de referência: AYN Odin 3.
 Arquitetura e etapas em [docs/PLANO.md](docs/PLANO.md).
 
-**Estado: M4 em andamento** — o APK abre, carrega o driver Turnip Gen8 V38 pelo libadrenotools, cria a
-superfície Vulkan e lê o controle (M0). O FEXCore roda código x86-64 dentro do app e o liga a
-funções nativas (M1). O carregador mapeia a imagem do jogo preparada pelo SotC-PC e roda o
-inicializador da libc.prx até o primeiro import sem implementação (M2). Os relatórios ficam em
-`docs/`. O jogo ainda não roda.
+**Estado: M4 em andamento.** O jogo roda no Odin 3 pelo runtime e pela biblioteca de vídeo do
+SotC-PC sobre o FEXCore: inicializa, carrega o mundo e **desenha a abertura da tela de título** a
+20–30 FPS. Ainda há uma queda do driver de vídeo ("Vulkan device lost") depois de algum tempo
+(detalhes em `docs/PLANO.md`). Relatórios das etapas em `docs/`.
 
-O runtime e a biblioteca de vídeo do SotC-PC rodam no Odin 3: o jogo inicializa, carrega o mundo e
-**desenha a abertura da tela de título** a 20–30 FPS, mas o processo termina depois de 8 a 50
-segundos (M4, em andamento; detalhes em `docs/PLANO.md`).
+## Launcher
+
+O app abre num launcher, como o do SotC-PC, feito para o controle do Odin 3 (direcional, A
+confirma, B volta):
+
+- **Jogar**: verifica a permissão, o jogo, a imagem preparada e o driver; escolhe o modo
+  (Normal, Pro, Extremo, Personalizado); botão JOGAR.
+- **Jogo e saves**: pasta do jogo (seletor de pastas ou busca automática em `PlayStation 4`),
+  pasta `out` do SotC-PC, nome do jogador e idioma.
+- **Imagem e FPS**: 30/60/ilimitado e FPS dinâmico, PS4 Pro, texturas, filtro 16x, FSR 1, nitidez,
+  memória de vídeo, apresentação, mostrar FPS, efeitos (vinheta, névoa, SSAO, motion blur),
+  pular logos e filme.
+- **Controles e som**: vibração, volume e canais.
+- **Driver de vídeo**: os pacotes adrenotools embutidos, em `Download` (até três pastas abaixo) e
+  em `files/drivers`; importar um `.zip`; opções `TU_DEBUG` do Turnip.
+- **Avançado**: cvars do motor, variáveis de ambiente, leituras da GPU, TSO do FEX, autoteste,
+  menu de depuração, limpar o cache de shaders e o relatório da última sessão.
+
+As escolhas viram o ambiente do jogo (`SOTC_MODES`, `SOTC_CVARS`, `SOTC_FPS_*`, `SOTC_LOD_*`,
+`BB_FSR1`...), como no PC. Os patches do `scripts/sotc_modes.py` (fps60game, grassbuf, af16,
+correção do alocador de páginas) e a linha de comando do motor são aplicados na memória ao
+carregar. O jogo roda num processo próprio (`:game`): fechar o jogo libera toda a memória dele.
 
 ## Testar no aparelho
 
-1. O jogo (o **seu** dump, `CUSA08809` ou `CUSA08034`, com `sce_sys/param.sfo`) fica numa pasta
-   `PlayStation 4` de qualquer volume, até dois níveis abaixo, por exemplo
-   `SD/PlayStation 4/Shadow Of The Colossus/CUSA08809`. Uma atualização em `CUSA08809-patch`, ao
-   lado, é aplicada por cima. Outra pasta pode ser indicada em `files/game/game_dir.txt`.
-2. Na primeira abertura, o app pede "Acesso a todos os arquivos" para ler o jogo fora da pasta
-   dele.
-3. A imagem preparada pelo SotC-PC vai para a pasta do app:
+1. O jogo (o **seu** dump, `CUSA08809` ou `CUSA08034`, com `sce_sys/param.sfo`) fica onde está,
+   por exemplo `SD/PlayStation 4/Shadow Of The Colossus/CUSA08809`. Uma atualização em
+   `CUSA08809-patch`, ao lado, é aplicada por cima. Escolha a pasta em **Jogo e saves**.
+2. O launcher pede "Acesso a todos os arquivos" para ler o jogo fora da pasta do app.
+3. A imagem preparada pelo SotC-PC (a pasta `out` com `boot-linked.bin` e `content.bin`) pode
+   ficar em qualquer pasta (escolha em **Jogo e saves**) ou na pasta do app:
 
 ```powershell
 adb push "E:\GAMES\Shadow Of The Colossus\SotC-PC\out\boot-linked.bin" /sdcard/Android/data/io.github.ajncsystem.sotc/files/game/boot-linked.bin
@@ -32,10 +49,10 @@ adb push "E:\GAMES\Shadow Of The Colossus\SotC-PC\out\boot-linked.bin" /sdcard/A
 adb push "E:\GAMES\Shadow Of The Colossus\SotC-PC\out\content.bin" /sdcard/Android/data/io.github.ajncsystem.sotc/files/game/content.bin
 ```
 
-O resultado vai para o logcat (tags `SotC` e `SotC-RT`) e para `files/m3-report.txt`.
+O resultado vai para o logcat (tags `SotC` e `SotC-RT`) e para `files/m3-report.txt` (botão
+"Ver o relatório da última sessão" no launcher).
 
 Este projeto não contém o jogo, firmware nem chaves da Sony.
-
 ## Compilar
 
 Clone com os submódulos de que o build precisa (não use `--recursive`: o FEX traz binários de
@@ -77,15 +94,8 @@ A biblioteca de vídeo (`app/src/main/cpp/gpu/`, do SotC-PC) também usa `extern
 
 O APK embute o pacote adrenotools que estiver em `drivers/Turnip_Gen8_V38.zip` (Turnip Gen8 V38,
 Mesa 27.0.0-1, de StevenMXZ). Ele não está no git: copie o seu para `drivers/` antes de compilar;
-sem ele o app usa o driver Qualcomm do sistema. Para testar outro, sem recompilar:
-
-```powershell
-adb push Outro_Driver.zip /sdcard/Android/data/io.github.ajncsystem.sotc/files/drivers/
-adb shell "echo Outro_Driver.zip > /sdcard/Android/data/io.github.ajncsystem.sotc/files/drivers/selected.txt"
-```
-
-`system` no `selected.txt` usa o driver Qualcomm do sistema. O relatório da última execução fica
-em `/sdcard/Android/data/io.github.ajncsystem.sotc/files/m0-report.txt`.
+sem ele o app usa o driver Qualcomm do sistema. Outros pacotes (.zip com `meta.json`) aparecem na
+página **Driver de vídeo** do launcher quando estão em `Download` ou são importados por ela.
 
 ## Licença
 

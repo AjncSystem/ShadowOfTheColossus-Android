@@ -50,6 +50,6 @@ if ($Install) {
     & $adb install -r $apk.FullName
     if ($LASTEXITCODE -ne 0) { throw 'adb install failed' }
     & $adb logcat -c
-    & $adb shell am start -n io.github.ajncsystem.sotc/.SotcActivity
+    & $adb shell am start -n io.github.ajncsystem.sotc/.LauncherActivity
     & $adb logcat -s SotC:V SDL:V SDL/APP:V AndroidRuntime:E DEBUG:V
 }

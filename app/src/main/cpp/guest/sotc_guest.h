@@ -34,6 +34,15 @@ static inline uint64_t sotc_guest_call3(const void *fn, uint64_t a, uint64_t b, 
     return sotc_guest_call(fn, 3, v);
 }
 
+/* Inside a host function the guest called: the guest's return address (where its `call` will
+ * return), as __builtin_return_address(0) gives it on SotC-PC where the game runs natively. */
+uintptr_t sotc_guest_return_address(void);
+
+/* Loads that read zero at an unmapped address (host_bridge.S + the app's SIGSEGV handler). */
+uint64_t sotc_safe_load64(uint64_t address);
+uint32_t sotc_safe_load32(uint64_t address);
+extern const char sotc_safe_load64_insn[], sotc_safe_load32_insn[];
+
 /* Host side of the generic guest -> native bridge (host_bridge.S). */
 uint64_t sotc_call_host(const void *fn, const uint64_t ints[8], const uint64_t fps[8], uint64_t out[3]);
 

@@ -74,6 +74,8 @@ add_library(main SHARED
     loader/m3_run.h
     loader/fibers.cpp
     loader/fibers.h
+    loader/sotc_modes.cpp
+    loader/sotc_modes.h
     guest/host_bridge.S
     guest/sotc_guest.h
 )

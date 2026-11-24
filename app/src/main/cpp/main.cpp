@@ -16,6 +16,9 @@
 #include <sys/stat.h>
 
 #include "gpu_driver.h"
+extern "C" void runtime_memory_reserve(void);
+
+#include "guest/guest_cpu.h"
 #include "guest/m1_selftest.h"
 #include <unistd.h>
 
@@ -69,7 +72,10 @@ void LogLines(const std::string& text) {
     }
 }
 
-// The SotC-PC runtime reports through printf/stderr: send both to logcat (tag SotC-RT).
+// The SotC-PC runtime reports through printf/stderr: send both to logcat (tag SotC-RT) and to
+// user/last_run.log (the launcher's "last session" report; logcat's ring buffer is small).
+FILE* g_run_log = nullptr;
+
 void* StdioPump(void* arg) {
     const int fd = static_cast<int>(reinterpret_cast<intptr_t>(arg));
     char buf[2048];
@@ -81,16 +87,21 @@ void* StdioPump(void* arg) {
         size_t nl;
         while ((nl = pending.find('\n')) != std::string::npos) {
             __android_log_print(ANDROID_LOG_INFO, "SotC-RT", "%.*s", static_cast<int>(nl), pending.data());
+            if (g_run_log) {
+                fwrite(pending.data(), 1, nl + 1, g_run_log);
+                fflush(g_run_log);
+            }
             pending.erase(0, nl + 1);
         }
     }
     return nullptr;
 }
 
-void RedirectStdio() {
+void RedirectStdio(const std::string& log_path) {
     static bool done = false;
     if (done) return;
     done = true;
+    g_run_log = fopen(log_path.c_str(), "w");
     int fds[2];
     if (pipe(fds) != 0) return;
     setvbuf(stdout, nullptr, _IOLBF, 0);
@@ -121,7 +132,9 @@ void* GameThread(void* arg) {
 }
 
 void StartGame(const std::string& external_dir, const std::string& app0) {
-    const std::string game = external_dir + "/game";
+    // The launcher names the folder with SotC-PC's prepared image (its "out" folder).
+    const char* prepared = getenv("SOTC_PREPARED_DIR");
+    const std::string game = prepared && *prepared ? std::string(prepared) : external_dir + "/game";
     auto* job = new GameJob{{game + "/boot-linked.bin", game + "/content.bin", app0, external_dir + "/user"},
                             external_dir + "/m3-report.txt"};
     struct stat st;
@@ -135,7 +148,7 @@ void StartGame(const std::string& external_dir, const std::string& app0) {
         delete job;
         return;
     }
-    RedirectStdio();
+    RedirectStdio(external_dir + "/user/last_run.log");
     pthread_attr_t attr;
     pthread_attr_init(&attr);
     pthread_attr_setstacksize(&attr, 16u << 20);
@@ -159,6 +172,9 @@ ANativeWindow* CurrentNativeWindow(SDL_Window* window) {
 int main(int argc, char* argv[]) {
     Args args = ParseArgs(argc, argv);
     LOGI("SotC-Android M0 starting");
+    if (!args.external_dir.empty()) RedirectStdio(args.external_dir + "/user/last_run.log");
+    // The PS4 address window, before SDL and the GPU driver map anything (runtime_memory.c).
+    runtime_memory_reserve();
 
     if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD)) {
         LOGE("SDL_Init: %s", SDL_GetError());
@@ -187,10 +203,19 @@ int main(int argc, char* argv[]) {
     vk.CreateSurface(CurrentNativeWindow(window));
 
     // M1: guest x86-64 execution through FEXCore. Screen tint: green = pass, red = fail.
+    // The full self-test only when the launcher asks for it (Avançado); otherwise just bring FEX up.
     std::string m1 = "SotC-Android M1 report\n";
-    const bool m1_ok = sotc::guest::RunM1SelfTest(args.files_dir, &m1);
-    LogLines(m1);
-    if (!args.external_dir.empty()) WriteText(args.external_dir + "/m1-report.txt", m1);
+    const char* selftest = getenv("SOTC_SELFTEST");
+    bool m1_ok;
+    if (selftest && selftest[0] == '1') {
+        m1_ok = sotc::guest::RunM1SelfTest(args.files_dir, &m1);
+        LogLines(m1);
+        if (!args.external_dir.empty()) WriteText(args.external_dir + "/m1-report.txt", m1);
+    } else {
+        std::string error;
+        m1_ok = sotc::guest::GuestCpu::Get().Init(args.files_dir, &error);
+        if (!m1_ok) LOGE("FEX init failed: %s", error.c_str());
+    }
     const float tint[3] = {m1_ok ? 0.0f : 0.6f, m1_ok ? 0.45f : 0.0f, 0.0f};
     // The game's presenter takes the window: release the test swapchain first (one swapchain
     // per surface) and stop drawing; this loop keeps pumping SDL events for the game.

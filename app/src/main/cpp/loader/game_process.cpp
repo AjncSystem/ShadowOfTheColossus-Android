@@ -16,6 +16,7 @@
 #include "../guest/guest_cpu.h"
 #include "../guest/sotc_guest.h"
 #include "../log.h"
+#include "sotc_modes.h"
 
 #ifndef MAP_FIXED_NOREPLACE
 #define MAP_FIXED_NOREPLACE 0x100000
@@ -183,8 +184,11 @@ bool GameProcess::Load(const std::string& boot_path, ImportResolver* resolver, s
         else value = data_targets_[r.value] + r.addend;
         std::memcpy(image_ + r.target, &value, 8);
     }
-    Protect();
     Appendf(*log, "applied %zu relocations\n", boot_.relocs.size());
+    // SotC-PC's game modes and engine command line (the launcher's settings), as probe.c applies
+    // patches.bin and cmdline.bin after relocation.
+    ApplySotcModes(image_, boot_.size, image_ + RoundPage(boot_.size), kTrampolineSize, log);
+    Protect();
     return true;
 }
 
