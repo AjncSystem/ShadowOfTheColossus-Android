@@ -410,6 +410,21 @@ launcher):
 | idem em 540p (`960x540`, altura múltipla de 4) | 20–22 |
 | padrão novo do launcher (720p, bloom/blur/TAA desligados) | 19,3 |
 
+Os patches dele não encaixam direto: ele parte do SotC-PC 0.74 e nós do 0.77 (os sete scripts
+falharam por trechos que mudaram); precisam ser portados à mão. Perfil (`simpleperf --app`): na
+thread de desenho `memcpy` 8%, `BindTextures` 3,8%, `tlsdesc_resolver_dynamic` 2,9%, `@plt` 2,2%;
+na de comandos `BackAlloc` 7,4%, `ProcessCommands` 4,6%, `RunSrtWalker` 4,6%,
+`StageSpecialization ==`/`ForEachSharp` ~3%. Primeiro passo: `-O2` em todo o `libmain.so`, ThinLTO
+e `-Bsymbolic-functions` (`SOTC_LTO`). A medição dele (16,5 FPS) não vale: o Odin estava em
+estado térmico 5, CPUs a ~90 °C e limitadas a 2,2 GHz depois de mais de uma hora de testes.
+Medir com o aparelho frio, e com pausas entre testes longos.
+
+Com o Odin frio: o modo médio limita as CPUs a ~2,2 GHz (hardware: 3,53 e 4,32 GHz). LTO no modo
+médio: 18,7 FPS (sem LTO: 19,3; o LTO não muda o FPS). Modo máximo: 20,6 FPS (+10%), mas a
+carcaça foi de 46 °C a 61–63 °C em ~1,5 min e o Android voltou ao estado térmico 5: não se sustenta
+numa partida. O FPS tampouco escala com o clock da CPU: as threads de comandos ainda esperam.
+`--ez autostart true` no LauncherActivity abre o jogo sem tocar em JOGAR (testes por adb).
+
 Ainda não trazidos: os atalhos de CPU dele na montagem de comandos (`stage_perf_fastpaths`,
 `stage_sotc_stage_spec_cpu`, `stage_sotc_flatbuf_reuse_057`, `stage_sotc_rt_memo`,
 `stage_sotc_reg_snapshot`), `SOTC_DEPTH_FAST`/`SOTC_GBUFFER_FAST`, o driver Turnip "GameHub DD

@@ -85,6 +85,21 @@ target_compile_options(main PRIVATE -Wall -Wextra -Wno-missing-field-initializer
 # The runtime and the GPU library call each other (event queues, memory, process time).
 target_link_libraries(main PRIVATE SDL3::SDL3 adrenotools fexcore
     -Wl,--start-group sotc_runtime bbgpu -Wl,--end-group android log dl)
-# The guest CPU glue and its benchmarks run hot even in debug APKs.
-set_source_files_properties(guest/guest_cpu.cpp guest/m1_selftest.cpp PROPERTIES COMPILE_OPTIONS "-O2")
+
+# Speed in every APK, debug ones included (the GPU command threads are the frame's critical path
+# on the Odin 3): -O2 for all of libmain.so, ThinLTO across the runtime, the GPU library and the
+# loader (inlining across files: the profile is flat), and no PLT for libmain.so's own calls
+# (@plt was ~2% of the draw thread): -fno-semantic-interposition + -Bsymbolic-functions.
+# SOTC_LTO=OFF builds without LTO (faster builds while debugging).
+option(SOTC_LTO "ThinLTO for libmain.so" ON)
+foreach(target main bbgpu sotc_runtime)
+    target_compile_options(${target} PRIVATE -O2 -fno-semantic-interposition)
+    if(SOTC_LTO)
+        target_compile_options(${target} PRIVATE -flto=thin)
+    endif()
+endforeach()
+target_link_options(main PRIVATE -Wl,-Bsymbolic-functions -O2)
+if(SOTC_LTO)
+    target_link_options(main PRIVATE -flto=thin -Wl,--thinlto-jobs=all)
+endif()
 add_dependencies(main main_hook file_redirect_hook gsl_alloc_hook hook_impl)

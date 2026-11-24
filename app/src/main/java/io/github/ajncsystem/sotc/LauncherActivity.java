@@ -63,6 +63,12 @@ public class LauncherActivity extends Activity {
         }
         buildFrame();
         showPage(page);
+        // Scripted tests (adb): "am start -n .../.LauncherActivity --ez autostart true" opens the
+        // game with the saved settings, without a tap on JOGAR that another window could catch.
+        if (getIntent() != null && getIntent().getBooleanExtra("autostart", false)) {
+            getIntent().removeExtra("autostart");
+            startGame();
+        }
     }
 
     @Override
