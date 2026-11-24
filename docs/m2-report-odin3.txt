@@ -1,0 +1,11 @@
+SotC-Android M2 report
+boot image: 59 MiB, 9 segments, 714353 relocations, 687 imports (197 native exports), 2 modules
+image at 0x60000000 (below 2 GiB, as the game's 31-bit pointers need)
+data import without backing: djxxOmW6-aw#0#F (__progname)
+functions: 0 host, 180 native PRX exports, 487 stop stubs; data: 2 host, 17 native, 1 trap pages
+applied 714353 relocations
+main thread: stack top 0x7384e7ffc0, TCB 0x76e19da020
+starting linked module 0 (init image+0x3960000)
+STOP in module initializer: first import without implementation: 959qrazPIrg#0#F = sceKernelGetProcParam
+  args 0x0, 0x0, 0x0; return address image+0x39be373 (module 0 +0x5e373)
+M2 done

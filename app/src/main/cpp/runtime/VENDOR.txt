@@ -1,0 +1,22 @@
+PS4 runtime from SotC-PC (https://github.com/AjncSystem/ShadowOfTheColossus-PC), commit aaf95c0
+(GPL-2.0): src/runtime*.c, runtime.h, runtime_event.h, import_names.inc, gpu/bbgpu.h.
+
+Local changes are marked "sotc-android:" and compiled under SOTC_ANDROID (the x86 builds of
+these files are unchanged):
+  runtime.h          ABI is empty on ARM64; GUEST_CALLn for calls into game code (through FEX);
+                     runtime_cpu_relax().
+  runtime.c          atexit/__cxa_atexit handlers run through GUEST_CALLn.
+  runtime_kernel.c   TSC = ARM generic timer (CNTVCT_EL0 / CNTFRQ_EL0, what FEX's rdtsc reads);
+                     pthread_once routines and key destructors through GUEST_CALLn.
+  runtime_thread.c   each guest thread gets a FEX context (sotc_guest_attach) with its own guest
+                     stack; entry through GUEST_CALL1; pthread_exit returns to a halting stub
+                     instead of longjmp.
+  runtime_mutex.c    spin_relax = yield.
+  runtime_memory.c   pause loop = runtime_cpu_relax.
+  runtime_ngs2.c     MXCSR FTZ/DAZ -> FPCR.FZ.
+  android_stubs.c    (new) GPU library and fiber stand-ins until they are ported, probe.c hooks.
+
+Not built yet: runtime_fiber.c (x86 context switch in host assembly; on FEX the switch must
+happen in guest code).
+
+Dependency: LibAtrac9 (externals/third_party/LibAtrac9, commit efca2e3, MIT), as in SotC-PC.

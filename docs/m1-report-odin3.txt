@@ -1,0 +1,13 @@
+SotC-Android M1 report
+FEX f2b679f6028ce1c38875233aecfcf5d3f8ebecec initialized in 0.6 ms
+host: atomics=1 rcpc=1 tsoimm9=1 afp=1 flagm=1 flagm2=1 sve128=0 sve256=0 avx=1 preserve_all=1
+TSO emulation: on
+[PASS] hle 8 args rbx=204 (want 204), rsp ok
+[PASS] host->guest callback r12=113 (want 113), r13 kept, rsp ok
+[PASS] float arg/return xmm0=3.375 (want 3.375)
+[PASS] threads + TLS 2/2 threads read their own fs:[0]
+[PASS] code invalidation before 0x1111, after 0x2222
+[PASS] bench int loop 200M guest 230 ms, native 149 ms -> guest at 65% of native, results match
+[PASS] bench HLE call 2000000 calls, 42 ns per guest->host->guest round trip
+[PASS] bench memory copy 64 MiB guest 8-byte loop 12.01 GB/s, host memcpy 20.37 GB/s
+M1 OK

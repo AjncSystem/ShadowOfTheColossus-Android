@@ -1,0 +1,27 @@
+[submodule "externals/SDL"]
+	path = externals/SDL
+	url = https://github.com/libsdl-org/SDL.git
+[submodule "externals/libadrenotools"]
+	path = externals/libadrenotools
+	url = https://github.com/bylaws/libadrenotools.git
+[submodule "externals/FEX"]
+	path = externals/FEX
+	url = https://github.com/FEX-Emu/FEX.git
+[submodule "externals/third_party/LibAtrac9"]
+	path = externals/third_party/LibAtrac9
+	url = https://github.com/Thealexbarney/LibAtrac9.git
+[submodule "externals/ext-boost"]
+	path = externals/ext-boost
+	url = https://github.com/shadps4-emu/ext-boost.git
+[submodule "externals/zydis"]
+	path = externals/zydis
+	url = https://github.com/zyantific/zydis.git
+[submodule "externals/Vulkan-Headers"]
+	path = externals/Vulkan-Headers
+	url = https://github.com/KhronosGroup/Vulkan-Headers.git
+[submodule "externals/VulkanMemoryAllocator"]
+	path = externals/VulkanMemoryAllocator
+	url = https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator.git
+[submodule "externals/robin-map"]
+	path = externals/robin-map
+	url = https://github.com/Tessil/robin-map.git

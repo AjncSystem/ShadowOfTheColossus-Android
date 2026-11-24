@@ -1,0 +1,18 @@
+.gradle/
+build/
+app/build/
+app/.cxx/
+local.properties
+*.iml
+.idea/
+captures/
+
+# GPU driver packages (third-party builds): put them in drivers/ yourself, see README.md.
+drivers/*.zip
+
+# Never commit game files, firmware or anything derived from a dump.
+*.sprx
+*.prx
+eboot.bin
+boot-linked.bin
+content.bin

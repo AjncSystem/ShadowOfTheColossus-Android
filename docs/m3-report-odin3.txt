@@ -1,0 +1,40 @@
+SotC-Android M3 report
+content profile loaded
+app0 /storage/4A21-0000/PlayStation 4/Shadow Of The Colossus/CUSA08809 (title CUSA08809), user /storage/emulated/0/Android/data/io.github.ajncsystem.sotc/files/user
+boot image: 59 MiB, 9 segments, 714353 relocations, 687 imports (197 native exports), 2 modules
+image at 0x60000000 (below 2 GiB, as the game's 31-bit pointers need)
+data import without backing: djxxOmW6-aw#0#F (__progname)
+functions: 341 host, 164 native PRX exports, 162 stop stubs; data: 2 host, 17 native, 1 trap pages
+applied 714353 relocations
+main thread: TCB and TLS from the runtime
+starting linked module 0 (init image+0x3960000)
+module 0 initializer returned 0
+starting linked module 1 (init image+0x3a60000)
+module 1 initializer returned 0
+entering the eboot at image+0xf120
+STOP in eboot: first import without implementation: ln33zjBrfjk#A#B = sceGnmGetTheTessellationFactorRingBufferBaseAddress
+  args 0x0, 0x13c000000, 0x76cf7dc330; return address image+0x18b77
+M3 done
+--------- beginning of main
+Runtime: game update overlaid from /storage/4A21-0000/PlayStation 4/Shadow Of The Colossus/CUSA08809-patch
+Runtime: application heap API registered
+Runtime: _init_env returned (verified libc implementation: RET)
+Runtime: sceKernelIsNeoMode -> 0 (SOTC_NEO)
+Runtime: direct allocation offset=0x0, size=131072 bytes, type=3
+Runtime: _init_env=1, atexit=2, __cxa_atexit=0, registered handlers=2
+Runtime: static guards acquired=0, released=0
+Runtime: guest threads created=0, exited=0, joined=0
+Runtime: fibers not available on Android yet
+Runtime: mutexes created=8, locks=78, unlocks=78
+Runtime: condition variables created=0, waits=0, wakeups=0
+Runtime: rwlocks created=0, reads=0, writes=0, unlocks=0
+Runtime: semaphores created=0, deleted=0, acquired=0, signals=0, timeouts=0
+Runtime: AppContent references=0, initialized=0, parameter queries=0, list queries=0
+Runtime: direct memory allocations=1, maps=0, live=131072, budget=5301600256
+Runtime: flexible maps=0, in use=0, protects=0, queries=0, regions=0
+Runtime: Ajm batches=0, jobs=0, ATRAC9 frames decoded=0
+Runtime: audio ports opened=0, buffers output=0
+Runtime: pad reads=0, gamepad=none
+Runtime: save data mounts=0, memory writes=0
+Runtime: files opened=0, reads=0 (0 bytes), writes=0, not found=0
+Runtime: memory operations=0
