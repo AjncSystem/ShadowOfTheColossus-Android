@@ -561,6 +561,15 @@ static void sample(PadData *d) {
     uint8_t *axes[4]={&d->left_x,&d->left_y,&d->right_x,&d->right_y};
     for (int i=0;i<4;++i) if (injected.stick[i]>=0) *axes[i]=(uint8_t)injected.stick[i];
     touch_ids(d);
+#ifdef SOTC_ANDROID
+    {   /* L3 + R3 (both sticks clicked together): show/hide the performance bar, once per press */
+        void bbgpu_toggle_perf_bar(void);
+        static int both_was_down;
+        const int both=(d->buttons & BTN_L3) && (d->buttons & BTN_R3);
+        if (both && !both_was_down) bbgpu_toggle_perf_bar();
+        both_was_down=both;
+    }
+#endif
 }
 
 static ABI int32_t pad_init(void) { pthread_mutex_lock(&lock); initialized=1; pthread_mutex_unlock(&lock); return 0; }

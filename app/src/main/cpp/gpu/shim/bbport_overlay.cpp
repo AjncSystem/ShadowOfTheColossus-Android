@@ -8,7 +8,11 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <ctime>
 #include <algorithm>
+#ifndef _WIN32
+#include <unistd.h>
+#endif
 #include <array>
 #include <filesystem>
 #include <fstream>
@@ -2044,6 +2048,158 @@ float FpsCounter() {
     return bottom;
 }
 
+// sotc-android: SOTC_PERF_BAR=1, a one-line bar across the top of the screen (the launcher's
+// "Mostrar FPS"): FPS and frame time graph, the game's CPU use, GPU busy, RAM in use, video memory,
+// battery and the time. System figures are read once a second.
+// L3 + R3 on the pad shows and hides it (bbgpu_toggle_perf_bar, from runtime_pad.c).
+std::atomic<bool> perf_bar_on{[] {
+    const char* v = std::getenv("SOTC_PERF_BAR");
+    return v && v[0] != '0';
+}()};
+
+bool PerfBarOn() {
+    return perf_bar_on.load(std::memory_order_relaxed);
+}
+
+struct PerfSample {
+    float cpu = -1, gpu = -1, ram_gb = -1, ram_total_gb = -1;
+    int batt = -1;
+};
+
+PerfSample SamplePerf() {
+    static PerfSample last;
+    static auto last_time = std::chrono::steady_clock::time_point{};
+    static unsigned long long last_ticks = 0;
+    const auto now = std::chrono::steady_clock::now();
+    if (now - last_time < std::chrono::seconds(1)) {
+        return last;
+    }
+    const double wall = std::chrono::duration<double>(now - last_time).count();
+    const bool first = last_time == std::chrono::steady_clock::time_point{};
+    last_time = now;
+    const auto read_file = [](const char* path, char* buf, size_t size) {
+        FILE* f = std::fopen(path, "r");
+        if (!f) return false;
+        const size_t n = std::fread(buf, 1, size - 1, f);
+        std::fclose(f);
+        buf[n] = 0;
+        return n > 0;
+    };
+    char buf[2048];
+#ifndef _WIN32
+    // The game's CPU time (utime + stime, fields 14-15) over all cores.
+    if (read_file("/proc/self/stat", buf, sizeof(buf))) {
+        if (const char* p = std::strrchr(buf, ')')) {
+            unsigned long long utime = 0, stime = 0;
+            if (std::sscanf(p + 2, "%*c %*d %*d %*d %*d %*d %*u %*u %*u %*u %*u %llu %llu", &utime,
+                            &stime) == 2) {
+                const unsigned long long ticks = utime + stime;
+                const long hz = sysconf(_SC_CLK_TCK);
+                const long cores = sysconf(_SC_NPROCESSORS_ONLN);
+                if (!first && wall > 0 && hz > 0 && cores > 0) {
+                    last.cpu = float(100.0 * double(ticks - last_ticks) / hz / wall / cores);
+                }
+                last_ticks = ticks;
+            }
+        }
+    }
+#endif
+    if (read_file("/sys/class/kgsl/kgsl-3d0/gpubusy", buf, sizeof(buf))) {
+        unsigned long long busy = 0, total = 0;
+        if (std::sscanf(buf, "%llu %llu", &busy, &total) == 2 && total) {
+            last.gpu = float(100.0 * double(busy) / double(total));
+        }
+    }
+    if (read_file("/proc/meminfo", buf, sizeof(buf))) {
+        unsigned long long total = 0, avail = 0;
+        if (const char* t = std::strstr(buf, "MemTotal:")) std::sscanf(t + 9, "%llu", &total);
+        if (const char* a = std::strstr(buf, "MemAvailable:")) std::sscanf(a + 13, "%llu", &avail);
+        if (total) {
+            last.ram_total_gb = float(total / 1048576.0);
+            last.ram_gb = float((total - avail) / 1048576.0);
+        }
+    }
+    if (read_file("/sys/class/power_supply/battery/capacity", buf, sizeof(buf))) {
+        last.batt = std::atoi(buf);
+    }
+    return last;
+}
+
+void PerfBar() {
+    const ImGuiViewport* viewport = ImGui::GetMainViewport();
+    const PerfSample s = SamplePerf();
+    ImGui::SetNextWindowPos(viewport->WorkPos, ImGuiCond_Always);
+    ImGui::SetNextWindowSize(ImVec2(viewport->WorkSize.x, 0.0f), ImGuiCond_Always);
+    ImGui::SetNextWindowBgAlpha(0.55f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(10.0f * base_scale, 3.0f * base_scale));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
+    ImGui::Begin("##perfbar", nullptr,
+                 ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoNav |
+                     ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_AlwaysAutoResize);
+    const ImVec4 white(0.95f, 0.95f, 0.95f, 1.0f), cyan(0.45f, 0.8f, 1.0f, 1.0f),
+        green(0.45f, 0.9f, 0.45f, 1.0f), yellow(1.0f, 0.82f, 0.3f, 1.0f), red(1.0f, 0.4f, 0.35f, 1.0f),
+        pink(0.95f, 0.55f, 0.9f, 1.0f), violet(0.7f, 0.6f, 1.0f, 1.0f), grey(0.55f, 0.55f, 0.55f, 1.0f);
+    const float target = TargetMs();
+    const float ms = frame_ms_avg;
+    const float fps = ms > 0.0f ? 1000.0f / ms : 0.0f;
+    const ImVec4 fps_color = ms <= target * 1.1f ? green : ms <= target * 1.6f ? yellow : red;
+    const auto sep = [&] {
+        ImGui::SameLine();
+        ImGui::TextColored(grey, "|");
+        ImGui::SameLine();
+    };
+    ImGui::TextColored(fps_color, "%.0f FPS", fps);
+    ImGui::SameLine();
+    float frames[kHistory];
+    for (int i = 0; i < hist_count; ++i) {
+        frames[i] = frame_hist[(hist_pos - hist_count + i + kHistory) % kHistory];
+    }
+    ImGui::PushStyleColor(ImGuiCol_PlotLines, fps_color);
+    ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0, 0, 0, 0));
+    float worst = target * 2.0f;
+    for (int i = 0; i < hist_count; ++i) {
+        worst = std::max(worst, frames[i]);
+    }
+    ImGui::PlotLines("##perfbar_frames", frames, hist_count, 0, nullptr, 0.0f, worst * 1.15f,
+                     ImVec2(140.0f * base_scale, ImGui::GetTextLineHeight()));
+    ImGui::PopStyleColor(2);
+    sep();
+    ImGui::TextColored(cyan, "CPU");
+    ImGui::SameLine();
+    s.cpu >= 0 ? ImGui::TextColored(white, "%.0f%%", s.cpu) : ImGui::TextColored(white, "--");
+    sep();
+    ImGui::TextColored(green, "GPU");
+    ImGui::SameLine();
+    s.gpu >= 0 ? ImGui::TextColored(white, "%.0f%%", s.gpu) : ImGui::TextColored(white, "--");
+    sep();
+    ImGui::TextColored(pink, "RAM");
+    ImGui::SameLine();
+    s.ram_gb >= 0 ? ImGui::TextColored(white, "%.1f/%.1f GB", s.ram_gb, s.ram_total_gb)
+                  : ImGui::TextColored(white, "--");
+    sep();
+    ImGui::TextColored(violet, "VRAM");
+    ImGui::SameLine();
+    ImGui::TextColored(white, "%.1f GB",
+                       SotcStats::vram_used.load(std::memory_order_relaxed) / 1073741824.0);
+    if (s.batt >= 0) {
+        sep();
+        ImGui::TextColored(yellow, "BATT");
+        ImGui::SameLine();
+        ImGui::TextColored(white, "%d%%", s.batt);
+    }
+    sep();
+    const std::time_t t = std::time(nullptr);
+    std::tm local{};
+#ifdef _WIN32
+    localtime_s(&local, &t);
+#else
+    localtime_r(&t, &local);
+#endif
+    ImGui::TextColored(white, "%02d:%02d:%02d", local.tm_hour, local.tm_min, local.tm_sec);
+    ImGui::End();
+    ImGui::PopStyleVar(2);
+}
+
 void Toast() {
     const ImGuiViewport* viewport = ImGui::GetMainViewport();
     ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x + viewport->WorkSize.x * 0.5f,
@@ -2432,7 +2588,7 @@ bool TriggerPending() {
 
 bool Visible() {
     return initialized && (menu_open || text_entry_active || list_active || OverlayOn() ||
-                           ToastShown() || LoadingShown() || TriggerPending() ||
+                           PerfBarOn() || ToastShown() || LoadingShown() || TriggerPending() ||
                            upscaler_label.load(std::memory_order_relaxed));
 }
 
@@ -2644,7 +2800,9 @@ void Render(vk::CommandBuffer cmdbuf, vk::ImageView view, vk::Extent2D extent,
         DrawMenu();
     }
     float fps_bottom = 0.0f;
-    if (OverlayOn() && !menu_open) {
+    if (PerfBarOn() && !menu_open) {
+        PerfBar();
+    } else if (OverlayOn() && !menu_open) {
         fps_bottom = FpsCounter();
     }
     if (ToastShown()) {
@@ -2682,3 +2840,10 @@ void Render(vk::CommandBuffer cmdbuf, vk::ImageView view, vk::Extent2D extent,
 }
 
 } // namespace BbOverlay
+
+// sotc-android: the pad's L3 + R3 (runtime_pad.c) shows and hides the performance bar.
+extern "C" void bbgpu_toggle_perf_bar(void) {
+    const bool on = !BbOverlay::perf_bar_on.load(std::memory_order_relaxed);
+    BbOverlay::perf_bar_on.store(on, std::memory_order_relaxed);
+    std::fprintf(stderr, "SOTC performance bar %s (L3 + R3)\n", on ? "shown" : "hidden");
+}

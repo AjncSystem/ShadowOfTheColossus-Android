@@ -340,6 +340,36 @@ extras) aponta para um arquivo em `Download` com os botões apertados (`cross`, 
 Ainda a ver: o FPS (8–17 no campo perto do Santuário), a memória (~700 MB livres) e partidas
 longas.
 
+### Desempenho (24/11/2026): ~10 FPS no campo do Santuário, meta 30 com a qualidade do PS4
+
+Medido parado no mesmo ponto (`bench.ps1`), 1080p, Turnip V38:
+
+| Mudança | FPS |
+|---|---|
+| base | 9–10 |
+| resolução interna 1280x720 (`SOTC_RENDER`, FSR 1 até 1080p) | 10,7 |
+| 720p + `TU_DEBUG=sysmem` | 11,4 |
+| sem o geometry shader das baricêntricas (terreno preto) | 12,4 |
+| TSO do FEX desligado / efeitos desligados / VRAM econômica / texturas desligadas | 10–11 |
+| grama reduzida / `SOTC_MUTEX_SPIN_US` 0 ou 200 / FPS ilimitado | 10–10,7 |
+
+- GPU: kgsl 75–80% ocupada, mas a 734–832 MHz de 1100 (o regulador não sobe). O custo não cai com
+  a resolução: é por draw/barreira (~3.900 draws e ~900 dispatches por quadro).
+- CPU: o JIT do jogo ~19%; ~30% em CAS de mutex e ~20% no kernel. `SOTC_HLE_STATS=1`: 2 milhões de
+  chamadas HLE/s, quase todas `scePthreadMutexLock/Unlock` (~770 mil/s cada) e `scePthreadYield`
+  (~200 mil/s): as threads de trabalho do jogo esperando tarefa em laço (sintoma, não causa).
+- `SOTC_GPU_TIMES` dá ~23 ms de GPU por quadro; num tiler as marcações dentro de uma passada não
+  medem o trabalho dos tiles, então o número real é provavelmente maior.
+
+Novidades: barra de desempenho no topo (`SOTC_PERF_BAR`, L3 + R3 mostra/esconde), resolução interna
+(`SOTC_RENDER=LxA`, sites do `sotc_modes.py --render`) e `SOTC_HLE_STATS`.
+
+Modo de desempenho máximo do Odin 3: a GPU vai a 1050 MHz (antes 734–832), 89 °C, e o FPS só passa
+de 9–10 para 10,9, com a GPU ainda ~80% ocupada. Nem clock nem resolução movem o FPS: o limite está
+em como o trabalho chega à GPU (barreiras, esperas e submissões), não na velocidade dela.
+
+Próximo: as barreiras e esperas no fluxo de comandos do Turnip e a espera ativa das threads do jogo.
+
 ## Referências
 
 - SotC-PC: carregador (`src/probe.c`), runtime (`src/runtime_*.c`), vídeo (`gpu/`).

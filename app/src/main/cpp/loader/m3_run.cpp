@@ -86,7 +86,9 @@ public:
         // pthread_exit / scePthreadExit return to their stub, which halts the guest thread.
         const bool halt = NidIs(nid, "3kg7rT0NQIs") || NidIs(nid, "FJrT5LuUBAU");
         auto& cpu = guest::GuestCpu::Get();
-        const char* name = names_.insert(nid).first->c_str();  // stable storage for the HLE table
+        // stable storage for the HLE table; the symbol name when known (SOTC_HLE_STATS reports it)
+        const std::string symbol = ImportSymbol(nid);
+        const char* name = names_.insert(symbol != "?" ? symbol : nid).first->c_str();
         return stubs.Make(cpu.RegisterHostFunction(name, reinterpret_cast<const void*>(fn)), halt);
     }
 

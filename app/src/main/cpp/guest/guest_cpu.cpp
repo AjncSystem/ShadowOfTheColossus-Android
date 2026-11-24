@@ -17,8 +17,14 @@
 #include <sys/mman.h>
 #include <ucontext.h>
 
+#include <algorithm>
 #include <array>
 #include <atomic>
+#include <chrono>
+#include <functional>
+#include <string>
+#include <thread>
+#include <vector>
 #include <cerrno>
 #include <cstdlib>
 #include <cstring>
@@ -202,6 +208,9 @@ struct GuestCpu::Impl {
                 result = static_cast<uint64_t>(-ENOSYS);
             } else {
                 impl_->calls.fetch_add(1, std::memory_order_relaxed);
+                if (impl_->stats) {
+                    impl_->stats[index].fetch_add(1, std::memory_order_relaxed);
+                }
                 const auto& entry = impl_->hle[index];
                 HleCall call{frame, index, entry.user};
                 result = entry.fn(call);
@@ -239,6 +248,8 @@ struct GuestCpu::Impl {
     std::array<Entry, kMaxHle> hle{};
     std::atomic<uint32_t> hle_count{0};
     std::mutex hle_mutex;
+    /// SOTC_HLE_STATS=1: calls per HLE entry, the busiest printed every 5 s (StartHleStats).
+    std::atomic<uint64_t>* stats = nullptr;
     std::atomic<uint64_t> calls{0};
 
     std::mutex threads_mutex;
@@ -433,6 +444,34 @@ bool GuestCpu::Init(const std::string& home, std::string* error) {
         return false;
     }
     impl_ = impl;
+
+    // SOTC_HLE_STATS=1: which imports the game calls most (calls per second, every 5 s).
+    if (const char* v = getenv("SOTC_HLE_STATS"); v && v[0] == '1') {
+        impl->stats = new std::atomic<uint64_t>[kMaxHle]();
+        std::thread([impl] {
+            std::vector<uint64_t> last(kMaxHle, 0);
+            uint64_t last_total = 0;
+            for (;;) {
+                std::this_thread::sleep_for(std::chrono::seconds(5));
+                const uint32_t n = impl->hle_count.load(std::memory_order_acquire);
+                std::vector<std::pair<uint64_t, uint32_t>> rows;
+                for (uint32_t i = 0; i < n; ++i) {
+                    const uint64_t c = impl->stats[i].load(std::memory_order_relaxed);
+                    if (c > last[i]) rows.emplace_back(c - last[i], i);
+                    last[i] = c;
+                }
+                const uint64_t total = impl->calls.load(std::memory_order_relaxed);
+                std::sort(rows.begin(), rows.end(), std::greater<>());
+                std::string line = "SOTC HLE " + std::to_string((total - last_total) / 5) + " calls/s:";
+                last_total = total;
+                for (size_t r = 0; r < rows.size() && r < 15; ++r) {
+                    line += " " + std::string(impl->hle[rows[r].second].name ? impl->hle[rows[r].second].name : "?") +
+                            "=" + std::to_string(rows[r].first / 5);
+                }
+                LOGI("%s", line.c_str());
+            }
+        }).detach();
+    }
 
     g_signal_ctx = impl->ctx.get();
     struct sigaction sa {};

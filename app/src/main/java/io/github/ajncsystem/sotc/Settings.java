@@ -65,7 +65,7 @@ final class Settings {
         DEFAULTS.put("vram_use", "normal");
         DEFAULTS.put("vram_profile", "light");
         DEFAULTS.put("present_mode", "Fifo");
-        DEFAULTS.put("show_fps", false);
+        DEFAULTS.put("show_fps", true);
         DEFAULTS.put("skip_logos", false);
         DEFAULTS.put("skip_film", false);
         for (String[] e : EFFECTS) DEFAULTS.put(e[0], true);
@@ -175,7 +175,8 @@ final class Settings {
         env.put("BB_PRESENT_MODE", str("present_mode"));
         if (!str("language").isEmpty()) env.put("BB_LANGUAGE", str("language"));
         if (!str("player_name").trim().isEmpty()) env.put("BB_USER_NAME", str("player_name").trim());
-        if (bool("show_fps")) env.put("SOTC_FPS", "1");
+        // Android: a one-line bar at the top (FPS, CPU, GPU, RAM, VRAM, battery, time).
+        if (bool("show_fps")) env.put("SOTC_PERF_BAR", "1");
         if (!str("readbacks").isEmpty()) env.put("BB_READBACKS", str("readbacks"));
 
         StringBuilder cvars = new StringBuilder();

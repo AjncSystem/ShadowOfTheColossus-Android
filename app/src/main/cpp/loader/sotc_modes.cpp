@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "sotc_modes.h"
 
+#include <algorithm>
 #include <cctype>
+#include <iterator>
 #include <cstdarg>
 #include <cstdio>
 #include <cstdlib>
@@ -137,6 +139,88 @@ bool ValidCvar(const std::string& c) {
 
 }  // namespace
 
+// Render size (sotc_modes.py RENDER_SITES, PS4 mode; the PS4 Pro values stay): kind 'W'/'H' an
+// integer immediate (the last 4 bytes of the instruction), 'w'/'h' a float, 'w2'/'h2' half of it,
+// 'a' the aspect W/H, 'P' the render target pool, 'v' the width of a 1080 line canvas (1080*W/H).
+struct RenderSite {
+    uint64_t address;
+    const char* kind;
+    const char* original;
+};
+const RenderSite kRenderSites[] = {
+    {0x00495bec, "H", "b938040000"}, {0x00495bf7, "W", "b880070000"},
+    {0x00495c91, "W", "ba80070000"}, {0x00495c96, "H", "b938040000"},
+    {0x00495d34, "W", "ba80070000"}, {0x00495d39, "H", "b938040000"},
+    {0x00495d61, "W", "b880070000"}, {0x00495d7c, "H", "b938040000"},
+    {0x0049b693, "W", "3d80070000"}, {0x0049b6c6, "H", "817c242038040000"},
+    {0x0049b74f, "P", "be00002814"},
+    {0x004a2ae9, "W", "41be80070000"}, {0x004a2af2, "H", "41bf38040000"},
+    {0x0056f2f3, "W", "b880070000"}, {0x0056f313, "H", "b838040000"},
+    {0x00662ac6, "W", "c705109ac80280070000"}, {0x00662ad0, "H", "c7050a9ac80238040000"},
+    {0x00ab5888, "W", "c7054a2db80280070000"}, {0x00ab5899, "H", "c7053d2db80238040000"},
+    {0x00ab5978, "W", "c70780070000"}, {0x00ab597e, "H", "c7470438040000"},
+    {0x00ab6001, "W", "c70080070000"}, {0x00ab6007, "H", "c7400438040000"},
+    {0x013c34a0, "w", "0000f044"}, {0x013c34a8, "h", "00008744"},
+    {0x013d7518, "w", "0000f044"}, {0x013d7520, "h", "00008744"},
+    {0x01667f14, "w", "0000f044"}, {0x01667f1c, "h", "00008744"},
+    {0x01667f24, "w", "0000f044"}, {0x01667f2c, "h", "00008744"},
+    {0x01667f34, "w", "0000f044"}, {0x01667f3c, "h", "00008744"},
+    {0x01667f44, "w2", "00007044"}, {0x01667f4c, "w2", "00007044"},
+    {0x01667f54, "w", "0000f044"}, {0x01667f5c, "h", "00008744"},
+    {0x01667f64, "w2", "00007044"}, {0x01667f6c, "h2", "00000744"},
+    {0x01667f74, "w2", "00007044"}, {0x01667f7c, "h2", "00000744"},
+    {0x01667f84, "w", "0000f044"}, {0x01667f8c, "h", "00008744"},
+    {0x01667f94, "w2", "00007044"}, {0x01667f9c, "h2", "00000744"},
+    {0x0166633c, "a", "398ee33f"},
+    {0x008e2cf1, "v", "c78550feffff0000f044"},
+    {0x00920309, "v", "c78560feffff0000f044"},
+};
+constexpr uint64_t kRenderTargetPool = 0x14280000;
+
+// SOTC_RENDER=WxH: the game renders at WxH instead of 1920x1080 (16:9 sizes; the presenter's FSR 1
+// scales the picture to the screen). PS4 mode only: the PS4 Pro path keeps its own sizes.
+size_t ApplyRenderSize(uint8_t* image, uint64_t size, std::string& out) {
+    const std::string spec = Env("SOTC_RENDER");
+    unsigned w = 0, h = 0;
+    if (spec.empty() || sscanf(spec.c_str(), "%ux%u", &w, &h) != 2 || (w == 1920 && h == 1080)) return 0;
+    if (w < 640 || h < 360 || w > 7680 || h > 4320 || w % 8 || h % 8) {
+        Appendf(out, "Render size %s: 640x360 to 7680x4320, multiples of 8; ignored\n", spec.c_str());
+        return 0;
+    }
+    if (Env("SOTC_NEO") == "1") {
+        Appendf(out, "Render size %s: PS4 Pro mode keeps its own sizes; ignored\n", spec.c_str());
+        return 0;
+    }
+    for (const RenderSite& s : kRenderSites) {
+        if (!Holds(image, size, s.address, s.original)) {
+            Appendf(out, "Render size: unexpected bytes at %#llx, not applied\n",
+                    static_cast<unsigned long long>(s.address));
+            return 0;
+        }
+    }
+    auto pool = std::max<uint64_t>(kRenderTargetPool, kRenderTargetPool * w * h / (1920 * 1080));
+    pool = (pool + 0xffff) & ~uint64_t{0xffff};
+    for (const RenderSite& s : kRenderSites) {
+        uint8_t data[4];
+        const std::string kind = s.kind;
+        auto put_u32 = [&](uint32_t v) { std::memcpy(data, &v, 4); };
+        auto put_f32 = [&](float v) { std::memcpy(data, &v, 4); };
+        if (kind == "W") put_u32(w);
+        else if (kind == "H") put_u32(h);
+        else if (kind == "P") put_u32(static_cast<uint32_t>(pool));
+        else if (kind == "w") put_f32(static_cast<float>(w));
+        else if (kind == "h") put_f32(static_cast<float>(h));
+        else if (kind == "w2") put_f32(w / 2.0f);
+        else if (kind == "h2") put_f32(h / 2.0f);
+        else if (kind == "a") put_f32(static_cast<float>(w) / h);
+        else put_f32(1080.0f * w / h); // 'v'
+        const uint64_t original_len = Hex(s.original).size();
+        std::memcpy(image + (s.address - kBase) + original_len - 4, data, 4);
+    }
+    Appendf(out, "Render size %ux%u: on\n", w, h);
+    return std::size(kRenderSites);
+}
+
 void ApplySotcModes(uint8_t* image, uint64_t size, uint8_t* cmdline_area, uint64_t cmdline_area_size,
                     std::string* log) {
     std::string& out = *log;
@@ -175,6 +259,7 @@ void ApplySotcModes(uint8_t* image, uint64_t size, uint8_t* cmdline_area, uint64
         for (const char* c : mode->cvars) cvars.emplace_back(c);
         Appendf(out, "Mode %s: on\n", name.c_str());
     }
+    writes += ApplyRenderSize(image, size, out);
 
     // PS4 Pro mode: its larger render targets push the free system memory figure under the
     // texture pool reserve (textures dropping to mip 3): reserve 0, which needs the pool fix.

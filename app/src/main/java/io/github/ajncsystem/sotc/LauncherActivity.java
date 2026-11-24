@@ -268,7 +268,7 @@ public class LauncherActivity extends Activity {
         choice("Uso de memória de vídeo", Settings.VRAM_USE, settings.str("vram_use"), v -> settings.put("vram_use", v));
         choice("Perfil de memória", Settings.VRAM_PROFILES, settings.str("vram_profile"), v -> settings.put("vram_profile", v));
         choice("Apresentação", Settings.PRESENT_MODES, settings.str("present_mode"), v -> settings.put("present_mode", v));
-        toggle("Mostrar FPS", "show_fps");
+        toggle("Barra de desempenho no topo (FPS, CPU, GPU, RAM, VRAM, bateria; L3 + R3 mostra/esconde)", "show_fps");
         label("Efeitos");
         for (String[] e : Settings.EFFECTS) toggle(e[1], e[0]);
         toggle("Pular os logos de abertura", "skip_logos");
