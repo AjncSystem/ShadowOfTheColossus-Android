@@ -229,6 +229,12 @@ final class Settings {
         if (!bool("rumble")) env.put("SOTC_RUMBLE", "0");
 
         // Android
+        // GPU waits on the Adreno: the GPU writes a marker the CPU polls (no kernel wake-up per
+        // readback), and recorded commands go to the GPU every 250 us so it runs the frame while
+        // the game records it (the periodic submit is on only for NVIDIA/AMD otherwise).
+        // Field near the Sanctuary: 10 -> 13 FPS. extra_env overrides both.
+        env.put("SOTC_WAIT_MARKER", "1");
+        env.put("SOTC_FLUSH_US", "250");
         if (!str("tu_debug").trim().isEmpty()) env.put("TU_DEBUG", str("tu_debug").trim());
         env.put("SOTC_FEX_TSO", bool("fex_tso") ? "1" : "0");
         if (bool("selftest")) env.put("SOTC_SELFTEST", "1");

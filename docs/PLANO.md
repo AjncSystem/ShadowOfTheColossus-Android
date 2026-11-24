@@ -368,7 +368,33 @@ Modo de desempenho máximo do Odin 3: a GPU vai a 1050 MHz (antes 734–832), 89
 de 9–10 para 10,9, com a GPU ainda ~80% ocupada. Nem clock nem resolução movem o FPS: o limite está
 em como o trabalho chega à GPU (barreiras, esperas e submissões), não na velocidade dela.
 
-Próximo: as barreiras e esperas no fluxo de comandos do Turnip e a espera ativa das threads do jogo.
+**O gargalo (`SOTC_DRAW_SPLIT=1`, ~100 ms por quadro):** a thread de desenho fica ~45 ms ocupada
+(binds 26, draws e dispatches ~42) e ~58 ms parada; a interpretação dos comandos leva ~25 ms; e o
+jogo espera leituras da GPU ~30 ms por quadro, em ~30 idas e voltas CPU↔GPU (`finish` ~1.450 em
+5 s). Cada leitura precisa (o jogo lendo memória que a GPU escreveu) manda a fila, espera a GPU e só
+então libera o jogo: no PC ~0,1–0,3 ms, aqui milissegundos. Por isso nem clock nem resolução mudam o
+FPS. `BB_READBACKS=1` (relaxadas) fecha o jogo, como no PC.
+
+**Driver da Qualcomm (sistema):** passa da inicialização (subgrupos de 64 nativos, Vulkan 1.3,
+15 GB), mas o compilador recusa o primeiro shader de compute (`0x50784801`, "Shader compilation
+failed for shaderType: 5"). Não tem `extended_dynamic_state3`, `attachment_feedback_loop`,
+`memory_budget`, `shader_atomic_float2` nem `shaderFloat64`. Para ver o motivo falta despejar o
+SPIR-V (`BB_DUMP_SHADERS=1`; o adb não lê `Android/data`, e apontar `BB_GPU_USER_DIR` para
+`Download` não gravou).
+
+**Sincronizações encurtadas (24/11/2026): 10 → 13 FPS.** Com o Turnip no modo sem tiles,
+`SOTC_GPU_TIMES` mostra ~31 ms de GPU por quadro: a GPU daria conta de 30 FPS, mas ficava parada
+esperando trabalho. Dois ajustes do SotC-PC que no Adreno estavam desligados:
+- envio periódico (`SOTC_FLUSH_US`): só ligava em NVIDIA/AMD; a cada 250 µs (1000 µs: sem ganho)
+  a GPU roda o quadro enquanto o jogo o grava;
+- marcador de espera (`SOTC_WAIT_MARKER=1`): a GPU escreve um marcador que a CPU lê, em vez de
+  acordar pelo kernel a cada leitura.
+Juntos: 13 FPS em três partidas seguidas, kgsl 88% ocupada. Padrão no Android (Settings.java).
+`SOTC_WAIT_SPIN_US=1000` sozinho fechou o jogo uma vez.
+
+Ainda: o kgsl conta ~68 ms de GPU por quadro e as marcações ~31 ms; a diferença está entre as
+operações (barreiras, passagens de render, cópias). E o jogo fechou no carregamento em ~1 de cada
+3 partidas em várias configurações; `bench.ps1` agora guarda o log quando isso acontece.
 
 ## Referências
 
