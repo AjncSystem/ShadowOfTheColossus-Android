@@ -48,7 +48,8 @@ bool ar_is_read_only{true};
 std::string AdrenoWaveTag() {
 #ifdef __ANDROID__
     const char* v = std::getenv("SOTC_ADRENO_WAVE64");
-    return v && v[0] == '0' ? "" : "_w64";
+    // "gs": built with the barycentric geometry shader (Turnip has no barycentric extension).
+    return v && v[0] == '0' ? "_gs" : "_w64gs";
 #else
     return "";
 #endif

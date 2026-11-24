@@ -326,8 +326,19 @@ e o brilho vermelho sumiram na abertura.
 são de 2 MiB (`BB_NONSPARSE_ARENA_MB`): 1,3 GB e ~1,4 GB livres no mesmo ponto, mesmo FPS. 4,4 min
 sem queda.
 
-Ainda a ver: o Wander e o Agro com textura (não apareceram nas fotos do último teste), o FPS
-(15–20 nas partes pesadas da abertura) e partidas mais longas.
+**Terreno preto (24/11/2026): baricêntricas por geometry shader.** O SotC interpola à mão as
+entradas dos pixel shaders a partir das baricêntricas; o Turnip não tem
+`VK_KHR_fragment_shader_barycentric` nem a extensão da AMD, e o geometry shader que as fornece (PC,
+GTX 10xx, issues #57/#68/#102) só ligava no driver da NVIDIA. Sem ele: terreno e rochas pretos e
+personagens chapados. Agora liga também no Turnip (cache `_w64gs`). Com isso o jogo aparece
+completo: campo, rochas, Wander, Agro, Santuário.
+
+**Jogável (24/11/2026):** com "pular logos" e "pular filme" o jogo vai direto ao Santuário; o
+Wander anda, a câmera gira, R1 ergue a espada. Para testes automáticos, `BB_PAD_FILE` (variáveis
+extras) aponta para um arquivo em `Download` com os botões apertados (`cross`, `ly=0`, ...).
+
+Ainda a ver: o FPS (8–17 no campo perto do Santuário), a memória (~700 MB livres) e partidas
+longas.
 
 ## Referências
 

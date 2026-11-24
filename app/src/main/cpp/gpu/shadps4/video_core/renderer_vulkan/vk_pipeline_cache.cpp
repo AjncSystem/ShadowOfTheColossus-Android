@@ -396,9 +396,12 @@ PipelineCache::PipelineCache(const Instance& instance_, Scheduler& scheduler_,
     const bool khr_barycentric = instance_.IsFragmentShaderBarycentricSupported() && !no_barycentric;
     const bool amd_explicit_vertex = instance_.IsAmdShaderExplicitVertexParameterSupported() && !no_barycentric &&
                                      !test_on("SOTC_NO_EXPLICIT_VERTEX");
+    // sotc-android: Turnip (Adreno) has neither extension either: the terrain and rocks came out
+    // black and the characters flat, the GTX 10xx symptom. It has geometry shaders: same path.
     const bool barycentric_via_gs = !khr_barycentric && !amd_explicit_vertex &&
                                     instance.IsGeometryStageSupported() &&
-                                    instance.GetDriverID() == vk::DriverId::eNvidiaProprietary &&
+                                    (instance.GetDriverID() == vk::DriverId::eNvidiaProprietary ||
+                                     instance.GetDriverID() == vk::DriverId::eMesaTurnip) &&
                                     !env_is("SOTC_BARYCENTRIC_GS", "0");
     if (barycentric_via_gs) {
         LOG_WARNING(Render_Vulkan, "No fragment shader barycentrics: emulated by a geometry shader");
