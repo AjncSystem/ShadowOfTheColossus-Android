@@ -46,6 +46,15 @@ inline const char* const kCauseNames[CCauseBits] = {"barrier", "upload", "tile",
                                                     "bufcopy"};
 inline std::atomic<u32> pending_causes{0};
 
+/// sotc-android: the render pass the next ops go into (Scheduler::BeginRendering), for the report
+/// by pass: width << 32 | height << 16 | color attachments << 4 | depth; 0 outside a pass.
+inline u64 current_pass = 0;
+inline void NotePass(u32 width, u32 height, u32 colors, bool depth) {
+    if (kOn) [[unlikely]] {
+        current_pass = u64(width) << 32 | u64(height) << 16 | u64(colors) << 4 | u64(depth);
+    }
+}
+
 /// A recording site: cheap when off.
 inline void Note(Cause cause) {
     if (kOn) [[unlikely]] {

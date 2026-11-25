@@ -245,6 +245,7 @@ GraphicsPipeline::GraphicsPipeline(
         }
     }
     if (!sdata.gs.empty()) {
+        has_barycentric_gs = true;
         shader_stages.emplace_back(vk::PipelineShaderStageCreateInfo{
             .stage = vk::ShaderStageFlagBits::eGeometry,
             .module = CompileSPV(sdata.gs, instance.GetDevice()),

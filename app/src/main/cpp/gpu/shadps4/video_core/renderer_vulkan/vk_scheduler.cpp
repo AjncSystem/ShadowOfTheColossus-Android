@@ -161,6 +161,9 @@ void Scheduler::BeginRendering(const RenderState& new_state, u64 token) {
     is_rendering = true;
     render_state = new_state;
     render_state_token = token;
+    SotcGpuTimes::NotePass(render_state.width, render_state.height,
+                           render_state.num_color_attachments,
+                           render_state.depth_stencil_attachment.has_depth);
 
     std::array<vk::RenderingAttachmentInfo, 8> color_attachments;
     for (u32 i = 0; i < render_state.num_color_attachments; ++i) {
@@ -218,6 +221,7 @@ void Scheduler::EndRendering() {
         SotcStats::render_breaks.fetch_add(1, std::memory_order_relaxed);
     }
     is_rendering = false;
+    SotcGpuTimes::NotePass(0, 0, 0, false);
     // sotc: the graphics command buffer even while a cull dispatch is recorded (SOTC_CULL_QUEUE).
     sessions.back().primary.endRendering();
 }

@@ -2585,7 +2585,11 @@ static std::array<float, 5> VegetationScales() {
     static const std::array<float, 5> env = [] {
         std::array<float, 5> s{1.f, 1.f, 1.f, 1.f, 1.f};
         if (const char* v = std::getenv("SOTC_GRASS")) {
-            std::sscanf(v, "%f %f %f %f %f", &s[0], &s[1], &s[2], &s[3], &s[4]);
+            // sotc-android: commas too, so the launcher's extra variables (split at spaces) can
+            // set it.
+            std::string text{v};
+            std::replace(text.begin(), text.end(), ',', ' ');
+            std::sscanf(text.c_str(), "%f %f %f %f %f", &s[0], &s[1], &s[2], &s[3], &s[4]);
         }
         return s;
     }();
@@ -6555,6 +6559,10 @@ void Rasterizer::GpuTimesBefore(vk::CommandBuffer cmdbuf, u8 kind, const Pipelin
             hash = fs->pgm_hash;
         } else if (const auto* vs = stages[u32(Shader::SwStage::Vertex)]) {
             hash = vs->pgm_hash;
+        }
+        // sotc-android: draws with the barycentric geometry shader show as 0x80000000xxxxxxxx.
+        if (pipeline->HasBarycentricGs()) {
+            hash |= 1ull << 55;
         }
     }
     SotcGpuTimes::Before(instance, scheduler, cmdbuf, static_cast<SotcGpuTimes::Kind>(kind), hash,

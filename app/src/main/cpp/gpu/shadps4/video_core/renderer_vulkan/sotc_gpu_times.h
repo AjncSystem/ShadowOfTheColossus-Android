@@ -47,7 +47,15 @@ struct State {
         u32 causes;        ///< Cause bits recorded since the previous op
         u64 op;            ///< op_counter index
         u64 dep;           ///< newest op whose writes it reads (cull programs; ~0: none)
+        u64 pass;          ///< current_pass when it was recorded
     };
+    struct PassTotal {
+        double op = 0, between = 0;
+        u32 ops = 0;
+    };
+    std::unordered_map<u64, PassTotal> by_pass;
+    double gs_op = 0;
+    u32 gs_ops = 0;
     u32 dep_count = 0;
     double dep_slack = 0, dep_slack_first = 0, dep_slack_max = 0;
     std::unordered_map<u64, std::pair<double, u32>> slack_by_hash;
@@ -124,6 +132,14 @@ inline void Collect(State& s) {
         auto& h = s.by_hash[(u64(l.kind) << 56) ^ l.hash];
         h.first += op;
         ++h.second;
+        if (l.hash & (1ull << 55)) { // sotc-android: the barycentric geometry shader's draws
+            s.gs_op += op;
+            ++s.gs_ops;
+        }
+        auto& p = s.by_pass[l.pass];
+        p.op += op;
+        p.between += i && !l.after_submit ? between : 0.0;
+        ++p.ops;
         // Across a submission the gap holds the GPU waiting for the next one (idle); inside a
         // command buffer it is barriers, copies and render pass changes.
         if (i && l.after_submit) {
@@ -201,7 +217,8 @@ inline void Before(const Instance& instance, Scheduler& scheduler, Cmd cmdbuf, K
     const u32 i = static_cast<u32>(s.labels.size());
     const u64 tick = scheduler.CurrentTick();
     s.labels.push_back({hash, kind, tick != s.last_tick,
-                        pending_causes.exchange(0, std::memory_order_relaxed), op, dep});
+                        pending_causes.exchange(0, std::memory_order_relaxed), op, dep,
+                        current_pass});
     s.last_tick = tick;
     cmdbuf.writeTimestamp(vk::PipelineStageFlagBits::eBottomOfPipe, s.pool, 2 * i);
     s.open = i;
@@ -259,6 +276,35 @@ inline std::string Report() {
         }
         out += "\n";
     };
+    {
+        // sotc-android: by render pass (size, color attachments, depth), op and between times.
+        std::vector<std::pair<u64, State::PassTotal>> v(s.by_pass.begin(), s.by_pass.end());
+        std::sort(v.begin(), v.end(), [](const auto& a, const auto& b) {
+            return a.second.op + a.second.between > b.second.op + b.second.between;
+        });
+        out += "SOTC GPU TIMES by pass (WxH colors depth: op + between ms, ops):";
+        for (size_t i = 0; i < v.size() && i < 16; ++i) {
+            const u64 key = v[i].first;
+            if (key == 0) {
+                std::snprintf(line, sizeof(line), " outside: %.2f + %.2f, %u;",
+                              v[i].second.op * k, v[i].second.between * k,
+                              v[i].second.ops / s.samples);
+            } else {
+                std::snprintf(line, sizeof(line), " %ux%u c%u%s: %.2f + %.2f, %u;",
+                              u32(key >> 32), u32((key >> 16) & 0xffff), u32((key >> 4) & 0xf),
+                              key & 1 ? " d" : "", v[i].second.op * k, v[i].second.between * k,
+                              v[i].second.ops / s.samples);
+            }
+            out += line;
+        }
+        std::snprintf(line, sizeof(line), " with the barycentric geometry shader: %.2f ms, %u;",
+                      s.gs_op * k, s.gs_ops / s.samples);
+        out += line;
+        out += "\n";
+        s.by_pass.clear();
+        s.gs_op = 0;
+        s.gs_ops = 0;
+    }
     top(s.by_hash, "SOTC GPU TIMES ops by shader:");
     top(s.between_by_hash, "SOTC GPU TIMES between (same command buffer), before:");
     top(s.submit_by_hash, "SOTC GPU TIMES across submissions, before:");

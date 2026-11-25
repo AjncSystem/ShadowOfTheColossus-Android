@@ -57,6 +57,11 @@ public:
         return is_compute;
     }
 
+    /// sotc-android: the barycentric geometry shader is attached (SOTC_GPU_TIMES marks its draws).
+    bool HasBarycentricGs() const {
+        return has_barycentric_gs;
+    }
+
     using DescriptorWrites = std::vector<vk::WriteDescriptorSet>;
     void BindResources(DescriptorWrites& set_writes, const Shader::PushData& push_data) const;
 
@@ -72,6 +77,7 @@ protected:
     vk::UniqueDescriptorSetLayout desc_layout;
     std::array<const Shader::Info*, Shader::MaxStageTypes> stages{};
     bool uses_push_descriptors{};
+    bool has_barycentric_gs{};
     bool is_compute;
 };
 

@@ -480,6 +480,33 @@ cena, Odin frio: DD 18,9 e 18,5 (fim 19); nosso Turnip 19,5 (fim 20). Os ajustes
 FPS do port AOT não vem do driver. O geometry shader já só entra nos pipelines cujo pixel shader lê
 valores por vértice (`NeedsBarycentricGs`).
 
+**Onde vai o tempo de GPU (24/11/2026).** `SOTC_GPU_TIMES=1` (com `SOTC_FPS=1`, que imprime o
+relatório; `TU_DEBUG=sysmem,nomultipos` para os carimbos valerem dentro das passadas) agora soma por
+passada (tamanho, destinos de cor, profundidade) e marca os draws com o geometry shader das
+baricêntricas (`0x80000000xxxxxxxx`). Os carimbos em volta de cada draw inflam o total (~54 ms de
+operações por quadro com o jogo a 20 FPS), mas as proporções valem:
+
+| Passada | ms por quadro | draws |
+|---|---|---|
+| G-buffer 1280x720, 7 cores + profundidade | 23,7 | ~1.560 |
+| compute fora de passada | 11,8 | ~1.170 |
+| só profundidade 1280x720 (pré-passada) | 10,4 | ~2.150 |
+| sombra 1024x1024 | 5,6 | ~860 |
+| resto (pós-processamento) | ~2 | ~60 |
+| **draws com o geometry shader** (em várias passadas) | **31,4** | ~2.480 |
+
+Um só pixel shader, `0x972ea312` (com geometry shader, ~1.000 draws indiretos no G-buffer), leva
+~11 ms. Testado sem ganho: geometry shader passando só os componentes lidos (19,9 FPS; o Turnip
+já tira os não lidos ao ligar os estágios). Grama com metade da distância (`SOTC_GRASS=0.5,1,0.5,1,1`,
+aceita vírgulas agora): 20,7 (fim 21–22), +5–8% com perda visível.
+
+O SotC-PC tinha outro limite: GPU folgada (~13 ms) e o jogo esperando leituras e a thread de
+desenho; o que ganhou lá (envio periódico, marcador de espera, `SOTC_RB_STREAM`, caminhos rápidos
+da thread de desenho, cache de shaders) já está aqui. As opções do launcher PC que não vieram
+(`SOTC_PC_MEMORY`, `SOTC_TEX_DIRECT`/`GATHER`) pedem 24 GB e mexem na troca de área, não no FPS
+parado. Aqui o limite é o próprio trabalho da GPU, e mais da metade dele está nos draws que passam
+pelo geometry shader.
+
 Próximo teste (com o aparelho frio, no modo médio, fechando o jogo ao fim de cada medição: a
 carcaça chegou a ~100 °C segundo o usuário depois de vários testes seguidos):
 - `SOTC_RB_AHEAD=1`: leitura antecipada (Pink-shadPS4): quando o dado foi escrito por trabalho já
