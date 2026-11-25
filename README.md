@@ -1,13 +1,23 @@
-# SotC-Android
+# ShadowOfTheColossus-Android
 
 Port do [Shadow of the Colossus — PC](https://github.com/AjncSystem/ShadowOfTheColossus-PC)
-(PS4 CUSA08809/CUSA08034) para Android ARM64. Aparelho de referência: AYN Odin 3.
-Arquitetura e etapas em [docs/PLANO.md](docs/PLANO.md).
+(PS4 CUSA08809/CUSA08034) para Android ARM64. Aparelho de referência: AYN Odin 3 (Snapdragon 8
+Elite, Adreno 830). Arquitetura, medições e histórico em [docs/PLANO.md](docs/PLANO.md).
 
-**Estado: M4 em andamento.** O jogo roda no Odin 3 pelo runtime e pela biblioteca de vídeo do
-SotC-PC sobre o FEXCore: inicializa, carrega o mundo e **mostra a abertura com texturas**, a 15–30
-FPS, sem as quedas do driver de vídeo dos testes anteriores (o cache de buffers usa memória própria
-em vez de memória esparsa no Adreno; detalhes em `docs/PLANO.md`). Relatórios das etapas em `docs/`.
+**Estado (v0.77): jogável no Odin 3.** O jogo roda pelo runtime e pela biblioteca de vídeo do
+SotC-PC 0.77 sobre o FEXCore, com o Turnip (Mesa) próprio do port: 26–28 FPS no campo do Santuário
+em 720p interno no modo de desempenho médio, com a imagem do PS4 (bloom, blur e TAA desligados por
+padrão; dá para ligar no launcher). Meta: 30 FPS. Outros aparelhos Adreno 8xx devem funcionar, mas
+só o Odin 3 foi testado.
+
+## Instalar
+
+1. Baixe o APK da [última release](https://github.com/AjncSystem/ShadowOfTheColossus-Android/releases)
+   e instale.
+2. Prepare a imagem do jogo com o [SotC-PC](https://github.com/AjncSystem/ShadowOfTheColossus-PC)
+   (a pasta `out`) e copie o **seu** dump para o aparelho, como em [Testar no aparelho](#testar-no-aparelho).
+3. Abra o app, escolha as pastas em **Jogo e saves** e toque em JOGAR. L3 + R3 mostra/esconde a
+   barra de desempenho.
 
 ## Launcher
 
@@ -57,6 +67,10 @@ Este projeto não contém o jogo, firmware nem chaves da Sony.
 
 Clone com os submódulos de que o build precisa (não use `--recursive`: o FEX traz binários de
 teste que o build não usa):
+
+```powershell
+git clone https://github.com/AjncSystem/ShadowOfTheColossus-Android.git
+```
 
 ```powershell
 git submodule update --init

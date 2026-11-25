@@ -3,7 +3,7 @@ package io.github.ajncsystem.sotc;
 
 /** Version shown by the launcher and passed to the game (SOTC_PORT_VERSION). */
 final class BuildConfigLite {
-    static final String VERSION = "0.1.0";
+    static final String VERSION = "0.77";
 
     private BuildConfigLite() {}
 }
