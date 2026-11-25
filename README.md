@@ -94,8 +94,9 @@ A biblioteca de vídeo (`app/src/main/cpp/gpu/`, do SotC-PC) também usa `extern
 
 O APK embute os pacotes adrenotools que estiverem em `drivers/*.zip`. O padrão é
 `drivers/Turnip_R3_barycentric_SotC.zip`: o Turnip de StevenMXZ (Mesa `main` + patches do Adreno
-8xx) com `VK_KHR_fragment_shader_barycentric`, que o jogo usa no lugar de um geometry shader
-(`patches/turnip/README.md` diz como gerar). O Turnip Gen8 V38 (`drivers/Turnip_Gen8_V38.zip`)
+8xx) com `VK_KHR_fragment_shader_barycentric` (`patches/turnip/README.md` diz como gerar). O port
+ainda usa o geometry shader das baricêntricas no Turnip: pela extensão o mato e as sombras saem
+errados (`SOTC_TU_KHR_BARYCENTRIC=1` liga para testar). O Turnip Gen8 V38 (`drivers/Turnip_Gen8_V38.zip`)
 continua escolhível. Os pacotes não estão no git: gere ou copie o seu para `drivers/` antes de
 compilar; sem o padrão o app usa o driver Qualcomm do sistema. Outros pacotes (.zip com `meta.json`) aparecem na
 página **Driver de vídeo** do launcher quando estão em `Download` ou são importados por ela.

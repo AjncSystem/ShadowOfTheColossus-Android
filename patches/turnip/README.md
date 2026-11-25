@@ -2,7 +2,9 @@
 
 Patch local do SotC-Android para o Turnip (Mesa), sem envio ao Mesa. O jogo interpola parte das
 entradas à mão; sem a extensão, o port gera as baricêntricas num geometry shader (~20% do tempo de
-GPU). Com ela, o Odin 3 foi de 16–17 para 24–25 FPS na mesma cena (720p, modo médio).
+GPU). Com ela, o Odin 3 foi de 16–17 para 24–25 FPS na mesma cena (720p, modo médio), mas o mato
+e as sombras saem errados (ver `docs/PLANO.md`), então o port só usa a extensão com
+`SOTC_TU_KHR_BARYCENTRIC=1`.
 
 - `ir3_nir_lower_fs_barycentric.c`: passe NIR do ir3. Baricêntricas = `(1-i-j, i, j)` a partir dos
   `ij` do rasterizador; valor de uma entrada em cada vértice = `bary.f` em `ij` (0,0), (1,0) e

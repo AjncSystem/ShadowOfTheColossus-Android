@@ -393,7 +393,13 @@ PipelineCache::PipelineCache(const Instance& instance_, Scheduler& scheduler_,
         return v && std::strcmp(v, value) == 0;
     };
     const bool no_barycentric = env_is("SOTC_NO_BARYCENTRIC", "1");
-    const bool khr_barycentric = instance_.IsFragmentShaderBarycentricSupported() && !no_barycentric;
+    // sotc-android: our Turnip (patches/turnip) has the extension, but its per-vertex values come
+    // from the interpolator and the grass and shadows come out wrong; the geometry shader stays
+    // the default there. SOTC_TU_KHR_BARYCENTRIC=1 uses the extension (24-25 FPS, wrong image).
+    const bool turnip_khr_off = instance_.GetDriverID() == vk::DriverId::eMesaTurnip &&
+                                !env_is("SOTC_TU_KHR_BARYCENTRIC", "1");
+    const bool khr_barycentric = instance_.IsFragmentShaderBarycentricSupported() &&
+                                 !no_barycentric && !turnip_khr_off;
     const bool amd_explicit_vertex = instance_.IsAmdShaderExplicitVertexParameterSupported() && !no_barycentric &&
                                      !test_on("SOTC_NO_EXPLICIT_VERTEX");
     // sotc-android: Turnip (Adreno) has neither extension either: the terrain and rocks came out

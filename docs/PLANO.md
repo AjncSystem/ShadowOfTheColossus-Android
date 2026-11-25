@@ -445,9 +445,8 @@ bison, flex). Ganho esperado: o custo do geometry shader, ~20%. Patch só local,
 e `sotc_barycentric.py`, aplicado depois dos patches do `build_turnip.sh`; Mesa `main` fdae82f).
 Baricêntricas = `(1-i-j, i, j)` a partir dos `ij` do ir3; valor por vértice = `bary.f` em `ij`
 (0,0), (1,0), (0,1); entradas inteiras por vértice leem o vértice provocante. O driver lista a
-extensão, o perfil de shader fica "barycentrics 1, manual interpolation 0" (sem geometry shader) e
-a imagem sai correta (terreno, grama, personagem). 720p, modo médio, cache de shaders quente, mesma
-cena:
+extensão e o perfil de shader fica "barycentrics 1, manual interpolation 0" (sem geometry shader).
+720p, modo médio, cache de shaders quente, mesma cena:
 
 | Driver | FPS médio (45 s) | fim da medição |
 |---|---|---|
@@ -456,6 +455,22 @@ cena:
 
 Trocar de driver muda o perfil e refaz o cache de shaders: a primeira partida após a troca tem
 quedas (12–23 FPS) até compilar tudo.
+
+**Mas a imagem sai errada** (visto pelo usuário): mato com riscos horizontais esticados e sombras
+estranhas. Com o mesmo driver e o geometry shader (`SOTC_NO_BARYCENTRIC=1`) a imagem fica certa,
+então o erro está no passe. Tentativas que não resolveram (todas pioraram o terreno para triângulos
+de cor chapada):
+- ler como entrada flat os parâmetros flat do PS4 (eles também são lidos como P10/P20: o SotC
+  interpola à mão justamente os parâmetros flat);
+- ler como flat só os parâmetros flat lidos apenas como P0, com e sem provoking vertex = primeiro;
+- trocar a ordem dos vértices do passe (permutações 0 e 1 iguais; a 2 não chegou a carregar).
+Hipótese ainda aberta: `bary.f` em `ij` fixos não devolve os bits do vértice (zera denormais,
+propaga NaN), e o jogo guarda dados empacotados nesses parâmetros. Próximo passo seria extrair o
+shader do mato e comparar os valores por vértice com os do geometry shader.
+
+Por isso o port usa o geometry shader no Turnip mesmo com a extensão; `SOTC_TU_KHR_BARYCENTRIC=1`
+liga a extensão para investigar. O Turnip próprio continua o padrão: com o geometry shader ele deu
+20–21 FPS na mesma cena (V38: 16–17).
 
 Próximo teste (com o aparelho frio, no modo médio, fechando o jogo ao fim de cada medição: a
 carcaça chegou a ~100 °C segundo o usuário depois de vários testes seguidos):
