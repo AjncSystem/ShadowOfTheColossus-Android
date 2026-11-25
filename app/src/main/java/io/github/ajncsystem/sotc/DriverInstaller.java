@@ -30,7 +30,7 @@ import java.util.zip.ZipInputStream;
  * The chosen package is extracted into app-private storage, where the linker may dlopen it.
  */
 final class DriverInstaller {
-    static final String DEFAULT_PACKAGE = "Turnip_Gen8_V38.zip";
+    static final String DEFAULT_PACKAGE = "Turnip_R3_barycentric_SotC.zip";
 
     static final class Driver {
         final String name;

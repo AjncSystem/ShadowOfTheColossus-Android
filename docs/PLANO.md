@@ -425,6 +425,47 @@ carcaça foi de 46 °C a 61–63 °C em ~1,5 min e o Android voltou ao estado t�
 numa partida. O FPS tampouco escala com o clock da CPU: as threads de comandos ainda esperam.
 `--ez autostart true` no LauncherActivity abre o jogo sem tocar em JOGAR (testes por adb).
 
+Resultados (aparelho a ~49 °C pelos sensores do kernel; o "skin" do `thermalservice` fica parado
+na última leitura): base 16,9 (fim 18); `SOTC_RB_AHEAD=1` 19,2, mas a leitura antecipada só existe
+no caminho síncrono, e o que domina é o assíncrono (`BeginAsyncReadback`: copia no envio atual,
+envia e espera a GPU terminar tudo o que veio antes); o ganho é ruído, não fica ligada. SSR e
+névoa desligados (patches do Bachata) 19,5: efeitos leves. O peso está no tempo de GPU por quadro
+(~83% ocupada, ~40 ms por quadro; 30 FPS pede 33 ms). O geometry shader das baricêntricas custa
+~20%: o Turnip tem `VK_KHR_fragment_shader_barycentric` no código (V38, faux123, uncharted), mas não
+a habilita no Adreno 830; ligá-la pede um Turnip compilado por nós.
+
+**Turnip próprio (24/11/2026), investigação:** no Mesa `main`, o Turnip não implementa
+`VK_KHR_fragment_shader_barycentric` (o nome no `.so` vem da tabela comum de extensões). Seria
+implementar: as baricêntricas a partir dos `ij` do ir3 e os valores por vértice com `bary.f` em
+`ij` fixos, mais a declaração do recurso. Build: `build_turnip.sh` de StevenMXZ/Adreno-Tools-Drivers
+(Mesa `main` + patches do 8xx, NDK r29 Linux, meson), no WSL Debian 13 deste PC (faltam meson,
+bison, flex). Ganho esperado: o custo do geometry shader, ~20%. Patch só local, sem envio ao Mesa.
+
+**Turnip próprio, resultado (24/11/2026):** `patches/turnip/` (passe `ir3_nir_lower_fs_barycentric.c`
+e `sotc_barycentric.py`, aplicado depois dos patches do `build_turnip.sh`; Mesa `main` fdae82f).
+Baricêntricas = `(1-i-j, i, j)` a partir dos `ij` do ir3; valor por vértice = `bary.f` em `ij`
+(0,0), (1,0), (0,1); entradas inteiras por vértice leem o vértice provocante. O driver lista a
+extensão, o perfil de shader fica "barycentrics 1, manual interpolation 0" (sem geometry shader) e
+a imagem sai correta (terreno, grama, personagem). 720p, modo médio, cache de shaders quente, mesma
+cena:
+
+| Driver | FPS médio (45 s) | fim da medição |
+|---|---|---|
+| V38 + geometry shader | 15,5 | 16–17 |
+| Turnip próprio (KHR) | 18,8 | 24–25 |
+
+Trocar de driver muda o perfil e refaz o cache de shaders: a primeira partida após a troca tem
+quedas (12–23 FPS) até compilar tudo.
+
+Próximo teste (com o aparelho frio, no modo médio, fechando o jogo ao fim de cada medição: a
+carcaça chegou a ~100 °C segundo o usuário depois de vários testes seguidos):
+- `SOTC_RB_AHEAD=1`: leitura antecipada (Pink-shadPS4): quando o dado foi escrito por trabalho já
+  enviado, copia num envio próprio em vez de mandar e esperar tudo o que foi gravado. Só liga em
+  NVIDIA e AMD; no Adreno está desligada, como estavam o envio periódico e o marcador.
+- `SOTC_RB_PUSH=1` (cópia logo após o dispatch que escreveu) e `SOTC_RB_STATS=1` (quais leituras
+  custam espera, por instrução e região) para o mapa das leituras seletivas, no estilo do port de
+  TLOU (leitura relaxada no geral e precisa só onde o jogo precisa).
+
 Ainda não trazidos: os atalhos de CPU dele na montagem de comandos (`stage_perf_fastpaths`,
 `stage_sotc_stage_spec_cpu`, `stage_sotc_flatbuf_reuse_057`, `stage_sotc_rt_memo`,
 `stage_sotc_reg_snapshot`), `SOTC_DEPTH_FAST`/`SOTC_GBUFFER_FAST`, o driver Turnip "GameHub DD
