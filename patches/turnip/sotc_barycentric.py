@@ -53,8 +53,22 @@ edit("src/freedreno/ir3/meson.build",
 edit("src/freedreno/ir3/ir3_nir.h",
      "bool ir3_nir_lower_load_barycentric_at_offset(nir_shader *shader);\n",
      "bool ir3_nir_lower_load_barycentric_at_offset(nir_shader *shader);\n"
-     "bool ir3_nir_lower_fs_barycentric(nir_shader *shader);\n",
+     "bool ir3_nir_lower_fs_barycentric(nir_shader *shader);\n"
+     "void ir3_nir_encode_per_vertex_inputs(nir_shader *producer, nir_shader *fs);\n",
      "declaration")
+
+# Exact per-vertex bits: encoded by the stage before the fragment shader at link time.
+edit("src/freedreno/vulkan/tu_shader.cc",
+     "   nir_opt_varyings_bulk(link_shaders, link_shaders_count, true, UINT32_MAX,\n"
+     "                         UINT32_MAX, link_opts, dev->compiler, NULL);\n",
+     "   nir_opt_varyings_bulk(link_shaders, link_shaders_count, true, UINT32_MAX,\n"
+     "                         UINT32_MAX, link_opts, dev->compiler, NULL);\n\n"
+     "   /* VK_KHR_fragment_shader_barycentric (SotC-Android local patch) */\n"
+     "   if (link_shaders_count >= 2 &&\n"
+     "       link_shaders[link_shaders_count - 1]->info.stage == MESA_SHADER_FRAGMENT)\n"
+     "      ir3_nir_encode_per_vertex_inputs(link_shaders[link_shaders_count - 2],\n"
+     "                                       link_shaders[link_shaders_count - 1]);\n",
+     "link encode")
 edit("src/freedreno/ir3/ir3_nir.c",
      "      NIR_PASS(_, s, nir_opt_barycentric, true);\n",
      "      NIR_PASS(_, s, ir3_nir_lower_fs_barycentric);\n"

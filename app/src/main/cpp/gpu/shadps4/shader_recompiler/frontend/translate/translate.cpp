@@ -1186,7 +1186,7 @@ void Translator::EmitFetch(const GcnInst& inst) {
     info.fetch_shader_sgpr_base = code_sgpr_base;
     ASSERT(ParseFetchShader(info, fetch_data));
 
-    if (EmulatorSettings.IsDumpShaders()) {
+    if (EmulatorSettings.IsDumpShader(info.pgm_hash)) {
         using namespace Common::FS;
         const auto dump_dir = GetUserPath(PathType::ShaderDir) / "dumps";
         if (!std::filesystem::exists(dump_dir)) {

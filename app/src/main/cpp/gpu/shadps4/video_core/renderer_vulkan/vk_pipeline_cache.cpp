@@ -393,11 +393,12 @@ PipelineCache::PipelineCache(const Instance& instance_, Scheduler& scheduler_,
         return v && std::strcmp(v, value) == 0;
     };
     const bool no_barycentric = env_is("SOTC_NO_BARYCENTRIC", "1");
-    // sotc-android: our Turnip (patches/turnip) has the extension, but its per-vertex values come
-    // from the interpolator and the grass and shadows come out wrong; the geometry shader stays
-    // the default there. SOTC_TU_KHR_BARYCENTRIC=1 uses the extension (24-25 FPS, wrong image).
+    // sotc-android: our Turnip (patches/turnip) has the extension, with exact per-vertex bits
+    // (the halves of each value go through the interpolator as small integers): 27-28 FPS against
+    // 20-21 with the geometry shader on the Odin 3. SOTC_TU_KHR_BARYCENTRIC=0 goes back to the
+    // geometry shader.
     const bool turnip_khr_off = instance_.GetDriverID() == vk::DriverId::eMesaTurnip &&
-                                !env_is("SOTC_TU_KHR_BARYCENTRIC", "1");
+                                env_is("SOTC_TU_KHR_BARYCENTRIC", "0");
     const bool khr_barycentric = instance_.IsFragmentShaderBarycentricSupported() &&
                                  !no_barycentric && !turnip_khr_off;
     const bool amd_explicit_vertex = instance_.IsAmdShaderExplicitVertexParameterSupported() && !no_barycentric &&
@@ -1685,7 +1686,7 @@ std::string PipelineCache::GetShaderName(Shader::HwStage stage, u64 hash,
 
 void PipelineCache::DumpShader(std::span<const u32> code, u64 hash, Shader::HwStage stage,
                                size_t perm_idx, std::string_view ext) {
-    if (!EmulatorSettings.IsDumpShaders()) {
+    if (!EmulatorSettings.IsDumpShader(hash)) {
         return;
     }
 

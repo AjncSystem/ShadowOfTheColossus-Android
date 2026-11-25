@@ -472,6 +472,26 @@ Por isso o port usa o geometry shader no Turnip mesmo com a extensão; `SOTC_TU_
 liga a extensão para investigar. O Turnip próprio continua o padrão: com o geometry shader ele deu
 20–21 FPS na mesma cena (V38: 16–17).
 
+**Resolvido (25/11/2026): bits exatos por vértice → 26–28 FPS.** O shader mais pesado do G-buffer
+(`0x972ea312`, extraído com `BB_DUMP_SHADERS=1 BB_DUMP_ONLY=972ea312` e `BB_GPU_USER_DIR` numa pasta
+interna do app, que o `run-as` lê) lê os valores por vértice como bits: `BitCastU32F32`, depois
+`>> 16` e conversão de `half`. O jogo guarda dois `half` em cada 32 bits. O `bary.f` em `ij`
+fixos é aritmética de float: zera denormais (com o `half` alto zero, o valor inteiro some) e
+arredonda os bits baixos da mantissa (o `half` baixo). Somar `1 << 23` aos bits tirou os
+denormais, mas as pedras ainda saíram facetadas (o arredondamento). A correção:
+`ir3_nir_encode_per_vertex_inputs`, chamada em `tu_link_shaders`, faz o estágio antes do pixel
+shader escrever as duas metades de 16 bits como floats inteiros (0–65535, exatos em qualquer conta
+de interpolação), a baixa no componente original e a alta num slot genérico livre, e o pixel
+shader junta os bits de volta. Imagem igual à do geometry shader, 26–28 FPS na mesma cena (com o
+geometry shader: 20–21). Pacote `meta.json` versão 2; a extensão é o padrão
+(`SOTC_TU_KHR_BARYCENTRIC=0` volta ao geometry shader).
+
+Para testes: o teste da extensão e o despejo de shaders têm pasta de cache própria (tag `_t…`),
+então trocar de modo não apaga o cache normal; e o `bench.ps1` regrava o launcher no padrão ao fim
+de cada partida (as variáveis de teste ficavam no campo de variáveis extras, e o jogo aberto pelo
+launcher saía no modo de teste). Não listar `Android/data` com o adb: com milhares de arquivos de
+dump o adb travou duas vezes.
+
 **Turnip DD do port AOT (24/11/2026):** o ShadowOfTheColossus-Android-Aot embute só o Turnip DD do
 Droid-Deck (v0.9.1, Mesa `0c418c5054`). Não tem baricêntricas (o port usa o mesmo caminho do
 shadPS4 sem extensão); traz ajustes do Adreno 8xx copiados do driver da Qualcomm (histerese dos SP,

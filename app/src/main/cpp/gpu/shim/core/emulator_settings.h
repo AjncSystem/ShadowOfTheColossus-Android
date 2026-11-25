@@ -72,6 +72,29 @@ public:
     void SetNoInt64(bool value) { no_int64 = value; }
     bool IsNoInt64() const { return no_int64; }
     bool IsDumpShaders() { static const auto value = Flag("BB_DUMP_SHADERS", false); return value; }
+    // sotc-android: BB_DUMP_ONLY=<hex hash>,... limits BB_DUMP_SHADERS to those programs (all of
+    // them wrote ~5,000 files and the game stopped on a failed write before reaching play).
+    bool IsDumpShader(unsigned long long hash) {
+        if (!IsDumpShaders()) {
+            return false;
+        }
+        const char* only = std::getenv("BB_DUMP_ONLY");
+        if (!only || !*only) {
+            return true;
+        }
+        for (const char* p = only; *p;) {
+            char* end = nullptr;
+            const unsigned long long value = std::strtoull(p, &end, 16);
+            if (end == p) {
+                break;
+            }
+            if (value == hash) {
+                return true;
+            }
+            p = *end ? end + 1 : end;
+        }
+        return false;
+    }
     bool IsFsrEnabled() { static const auto value = Flag("BB_FSR1", false); return value; }
     // sotc: SOTC_HDR=1 shows the SDR game on an HDR10 (PQ) swapchain, expanded in post_process.frag.
     bool IsSdrToHdr() { static const auto value = Flag("SOTC_HDR", false); return value; }

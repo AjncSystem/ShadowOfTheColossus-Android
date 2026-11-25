@@ -60,7 +60,10 @@ std::string ShaderTestTag() {
         "SOTC_NAN_GUARD", "SOTC_AMD_AS_NV", "SOTC_MANUAL_INTERP", "SOTC_NO_EXPLICIT_VERTEX",
         "SOTC_NO_RTZ", "SOTC_CLIP_EMU", "SOTC_WAVE64_UNIFORM", "SOTC_WAVE64_IDENTITY",
         "SOTC_LDS_BARRIERS", "SOTC_LDS_SMALL", "SOTC_AMD64_LDS", "SHADPS4_IEEE_MINMAX", "SOTC_WQM_COPY",
-        "SOTC_QUAD_SWIZZLE"};
+        "SOTC_QUAD_SWIZZLE",
+        // sotc-android: the barycentric extension on Turnip, and the dump (a fresh folder compiles
+        // and so dumps every shader).
+        "SOTC_TU_KHR_BARYCENTRIC", "BB_DUMP_SHADERS"};
     u64 hash = 1469598103934665603ULL;
     bool any = false;
     for (const char* name : switches) {
