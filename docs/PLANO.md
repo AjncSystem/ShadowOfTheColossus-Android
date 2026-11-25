@@ -472,6 +472,14 @@ Por isso o port usa o geometry shader no Turnip mesmo com a extensão; `SOTC_TU_
 liga a extensão para investigar. O Turnip próprio continua o padrão: com o geometry shader ele deu
 20–21 FPS na mesma cena (V38: 16–17).
 
+**Turnip DD do port AOT (24/11/2026):** o ShadowOfTheColossus-Android-Aot embute só o Turnip DD do
+Droid-Deck (v0.9.1, Mesa `0c418c5054`). Não tem baricêntricas (o port usa o mesmo caminho do
+shadPS4 sem extensão); traz ajustes do Adreno 8xx copiados do driver da Qualcomm (histerese dos SP,
+`RB_RESOLVE_CR_CNTL`, LRZ por máscara de cor, autotuner de GMEM). Com o nosso geometry shader, mesma
+cena, Odin frio: DD 18,9 e 18,5 (fim 19); nosso Turnip 19,5 (fim 20). Os ajustes não ajudam aqui: o
+FPS do port AOT não vem do driver. O geometry shader já só entra nos pipelines cujo pixel shader lê
+valores por vértice (`NeedsBarycentricGs`).
+
 Próximo teste (com o aparelho frio, no modo médio, fechando o jogo ao fim de cada medição: a
 carcaça chegou a ~100 °C segundo o usuário depois de vários testes seguidos):
 - `SOTC_RB_AHEAD=1`: leitura antecipada (Pink-shadPS4): quando o dado foi escrito por trabalho já
